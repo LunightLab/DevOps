@@ -34,3 +34,7 @@ operation : voc, firebase crashlytics >> slack
 monitor : prometheus, grafana >> slack
 
 plan : notion >> slack
+
+
+url
+https://www.devopsinstitute.com/devops-for-mobile-app-development/
