@@ -1,0 +1,36 @@
+note.txt
+
+development 
+- gitlab version control
+1단계 merge request시 빌드하고 slack으로 알림처리
+2단계 merge request시 빌드하고 테스트로 넘김
+
+peer review
+- gitlab version control 머지 실행하면 slack으로 알림처리 코드리뷰
+
+build
+- 
+
+automation tests
+- 
+
+distribution
+- 
+
+
+org devops
+[code] - [build] - [test] - [release] - [deploy] - [operate] - [monitor] - [plan]
+
+code : gitlab, git
+
+build : xcode , android studio >> slack
+
+test : jenkins pipeline >> slack
+
+deploy : jenkins pipeline > testflight, firebase, web >> slack
+
+operation : voc, firebase crashlytics >> slack
+
+monitor : prometheus, grafana >> slack
+
+plan : notion >> slack
