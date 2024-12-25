@@ -2,20 +2,38 @@ note.txt
 
 development 
 - gitlab version control
-1단계 merge request시 빌드하고 slack으로 알림처리
-2단계 merge request시 빌드하고 테스트로 넘김
+- feature xyz.. 브랜치 전략은 현유지.
+
+📌 나무 및 QV 정상동작하는지 반드시 확인할것!
+
+📌 merge시 slack으로 알림처리
 
 peer review
 - gitlab version control 머지 실행하면 slack으로 알림처리 코드리뷰
 
-build
-- 
+📌  merge시 빌드하고 테스트로 넘김
 
-automation tests
-- 
+
+build
+📌  앱 빌드 자동화(gltlab에서 commit시 메시지 조건 확인하여 빌드수행)
+
+automation tests & 조직 업무 테스트
+- 메뉴화면 리스트를 가져와서 openscreen or openpopup 처리할 수 있도록 개발
 
 distribution
-- 
+- 테스트 빌드 : TestFlight, 📌adhoc
+- 운영빌드 : TestFlight
+📌 dsym파일 및 빌드 리포트 확인하는 기능을 강화
+📌 리포트를 요약하여 slack 메시지와 mail 전달.
+
+operate(app) & monitor(system)
+- firebase crashlytics
+- prometheus, grafana로 시스템 정상적으로 운영중인지 확인
+📌 xcode 및 apple connect, GA 리포트 정보 확인
+
+plan
+- notion mts 기능 업데이트 노션
+
 
 
 org devops
