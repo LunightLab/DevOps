@@ -2,7 +2,7 @@ note.txt
 
 development 
 - gitlab version control
-- feature xyz.. 브랜치 전략은 현유지.
+- feature xyz.. 브랜치 전략은 리뷰어를 지정(정1/부2 통과하면 머지 완료되도록 해야하지 않을까...)
 
 📌 나무 및 QV 정상동작하는지 반드시 확인할것!
 
