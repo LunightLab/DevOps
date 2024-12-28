@@ -1,4 +1,4 @@
-/*
+/***********************************************************************
  * Jenkins Pipeline Script
  * -----------------------
  * Project Name: [Your Project Name]
@@ -7,7 +7,7 @@
  * Date: [YYYY-MM-DD]
  * Version: 1.0
  * Notes: Modify this script as needed to fit your specific project requirements.
- */
+*********************************************************************** */
 
 pipeline {
     agent any // 파이프라인이 실행될 Jenkins 노드(여기서는 모든 노드에서 실행 가능)

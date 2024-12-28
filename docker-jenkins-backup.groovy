@@ -1,7 +1,12 @@
 /***********************************************************************
-*   @title - gitlab backup pipeline
-*   @description - Docker gitlab 컨테이너를 백업하고 thinbackup으로 lotate 백업된 jenkins를 백업하는 파이프라인
-*   @author - lunight
+ * Jenkins Pipeline Script
+ * -----------------------
+ * Project Name: docker backup pipeline
+ * Description: Docker gitlab 컨테이너를 백업하고 thinbackup으로 lotate 백업된 jenkins를 백업하는 파이프라인
+ * Author: lunight
+ * Date: [2024-12-DD]
+ * Version: 1.0
+ * Notes: -
 *********************************************************************** */
 
 pipeline {
