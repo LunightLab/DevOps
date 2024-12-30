@@ -1,7 +1,7 @@
 /***********************************************************************
  * Jenkins Pipeline Script
  * -----------------------
- * Project Name: [Your Project Name]
+ * Project Name: template-pipline.groovy
  * Description: This is a basic Jenkins Pipeline template for automating build, test, and deployment processes.
  * Author: lunight
  * Date: [YYYY-MM-DD]

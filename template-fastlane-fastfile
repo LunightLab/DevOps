@@ -1,0 +1,60 @@
+#***********************************************************************
+#   @title - template-fastlane-fastfile.groovy
+#   @description - fastlane template
+#   @author - lunight
+#********************************************************************** */
+default_platform(:ios)
+
+platform :ios do
+  desc "Increment build number, build the app, and upload to TestFlight"
+  lane :beta do
+    # 1. Ensure the project version and build number are incremented
+    increment_build_number(
+      xcodeproj: "YourProject.xcodeproj" # Replace with your Xcode project file
+    )
+
+    # 2. Ensure all dependencies are installed
+    cocoapods
+
+    # 3. Build the app
+    build_app(
+      scheme: "YourScheme" # Replace with your app's scheme
+    )
+
+    # 4. Upload the build to TestFlight
+    upload_to_testflight(
+      api_key_path: "./fastlane/AuthKey.p8", # Your App Store Connect API key
+      skip_waiting_for_build_processing: true # Skip waiting for processing
+    )
+  end
+
+  desc "Build and release app to the App Store"
+  lane :release do
+    # Ensure project version and build number are correct
+    increment_build_number(
+      xcodeproj: "YourProject.xcodeproj"
+    )
+
+    # Build the app
+    build_app(
+      scheme: "YourScheme"
+    )
+
+    # Upload to the App Store
+    upload_to_app_store(
+      api_key_path: "./fastlane/AuthKey.p8"
+    )
+  end
+
+  desc "Clean up DerivedData and reset build number"
+  lane :cleanup do
+    # Remove DerivedData
+    sh "rm -rf ~/Library/Developer/Xcode/DerivedData"
+
+    # Reset build number
+    increment_build_number(
+      xcodeproj: "YourProject.xcodeproj",
+      build_number: 1
+    )
+  end
+end
