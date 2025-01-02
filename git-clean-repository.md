@@ -77,7 +77,7 @@ bfg --delete-files "*.svn-base" .
 git reflog expire --expire=now --all
 git gc --prune=now --aggressive
 ```
-
+ 
 ### 재압축 및 최적화
 
 ```bash 
