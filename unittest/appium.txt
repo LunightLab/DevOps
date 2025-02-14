@@ -88,3 +88,15 @@ npm install -g appium-doctor
 📌 webdriveragent 경로
 ~/.appium/node_modules/appium-xcuitest-driver/node_modules/appium-webdriveragent
 
+
+python3 -m pip install --upgrade pip --break-system-packages
+python3 -m pip install Appium-Python-Client selenium --break-system-packages
+
+📌 WebDriverAgent 경로!
+Applications/Appium Server GUI.app/Contents/Resources/app/node_modules/appium/node_modules/appium-webdriveragent/WebDriverAgent.xcodeproj
+
+📌 강제실행
+xcodebuild -project WebDriverAgent.xcodeproj \
+-scheme WebDriverAgentRunner \
+-destination "id=00008110-00194C8A2222801E" \
+test
