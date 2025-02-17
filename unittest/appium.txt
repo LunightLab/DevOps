@@ -70,6 +70,21 @@ curl http://127.0.0.1:4723/wd/hub/status
   "appium:automationName": "XCUITest"
 }
 
+{
+  "platformName": "iOS",
+  "appium:automationName": "XCUITest",
+  "appium:platformVersion": "18.2.1",
+  "appium:deviceName": "iPhone15ProMax(DEV-F9E6)",
+  "appium:udid": "00008130-001165C411C0001C",
+  "appium:bundleId": "com.wooriwm.txsmart",
+  "appium:xcodeOrgId": "9BX62CHMR2",
+  "appium:xcodeSigningId": "iPhone Developer",
+  "appium:includeSafariInWebviews": true,
+  "appium:newCommandTimeout": 3600,
+  "appium:connectHardwareKeyboard": true
+}
+
+
 📌ideviceinstaller가 없으면 설치
 brew install ideviceinstaller
 
@@ -98,5 +113,5 @@ Applications/Appium Server GUI.app/Contents/Resources/app/node_modules/appium/no
 📌 강제실행
 xcodebuild -project WebDriverAgent.xcodeproj \
 -scheme WebDriverAgentRunner \
--destination "id=00008110-00194C8A2222801E" \
+-destination "id=00008130-001165C411C0001C" \
 test
