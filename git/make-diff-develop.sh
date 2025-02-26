@@ -1,7 +1,13 @@
+#***********************************************************************
+#   @title - add_gitignore.sh
+#   @description - .gitignore 옵션을 적용하기 위해 캐시된 파일을 제거하고 다시 추가
+#   @author - lunight
+#********************************************************************** */
+
 #!/bin/bash
 
 # 저장할 파일명
-OUTPUT_FILE="diff_result.txt"
+OUTPUT_FILE="diff-result.txt"
 
 # 현재 브랜치 이름 가져오기
 BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
@@ -10,8 +16,7 @@ BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
 CURRENT_DATE=$(date +"%Y-%m-%d %H:%M:%S")
 
 # 상태 코드 설명 표
-STATUS_LEGEND="
-===========================================
+STATUS_LEGEND="===========================================
 Git Diff 상태 코드 설명
 -------------------------------------------
 A  = Added (새로 추가된 파일)
@@ -25,6 +30,7 @@ U  = Unmerged (병합 충돌 발생)
 "
 
 # 출력 파일에 브랜치 정보 및 날짜 기록
+echo "===========================================" > $OUTPUT_FILE
 echo "브랜치: $BRANCH_NAME, 날짜: $CURRENT_DATE" > $OUTPUT_FILE
 echo "" >> $OUTPUT_FILE
 
