@@ -30,7 +30,6 @@ U  = Unmerged (병합 충돌 발생)
 "
 
 # 출력 파일에 브랜치 정보 및 날짜 기록
-echo "===========================================" > $OUTPUT_FILE
 echo "브랜치: $BRANCH_NAME, 날짜: $CURRENT_DATE" > $OUTPUT_FILE
 echo "" >> $OUTPUT_FILE
 
