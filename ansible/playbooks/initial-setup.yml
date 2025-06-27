@@ -1,0 +1,191 @@
+---
+- name: SSL 우회를 포함한 초기 설치
+  hosts: all_macs
+  gather_facts: yes
+  # vars 섹션 제거 - group_vars/all.yml에서 로드됨
+      
+  tasks:
+    - name: 현재 시스템 정보 출력
+      debug:
+        msg: |
+          === SSL 우회 적용된 초기 설치 ===
+          서버: {{ inventory_hostname }}
+          사용자: {{ ansible_user }}
+          OS: {{ ansible_distribution }} {{ ansible_distribution_version }}
+          아키텍처: {{ ansible_architecture }}
+
+    - name: Homebrew 설치 확인 (경로 포함)
+      shell: ls -la /opt/homebrew/bin/brew
+      register: brew_check
+      ignore_errors: yes
+
+    - name: Homebrew 상태 출력
+      debug:
+        msg: "Homebrew {{ 'exists' if brew_check.rc == 0 else 'not found' }}"
+
+    - name: .zshrc 파일 생성 및 PATH 설정
+      blockinfile:
+        path: "{{ ansible_env.HOME }}/.zshrc"
+        marker: "# {mark} HOMEBREW SETUP WITH SSL BYPASS"
+        block: |
+          # Homebrew SSL 우회 설정
+          export HOMEBREW_NO_AUTO_UPDATE={{ ssl_bypass_env.HOMEBREW_NO_AUTO_UPDATE }}
+          export HOMEBREW_CURLRC={{ ssl_bypass_env.HOMEBREW_CURLRC }}
+          export HOMEBREW_NO_ANALYTICS={{ ssl_bypass_env.HOMEBREW_NO_ANALYTICS }}
+          export HOMEBREW_NO_INSECURE_REDIRECT={{ ssl_bypass_env.HOMEBREW_NO_INSECURE_REDIRECT }}
+          export HOMEBREW_CURL_RETRIES={{ ssl_bypass_env.HOMEBREW_CURL_RETRIES }}
+          
+          # Homebrew PATH 설정
+          eval "$(/opt/homebrew/bin/brew shellenv)"
+        create: yes
+
+    - name: curl 설정 파일 생성 (SSL 검증 비활성화)
+      copy:
+        content: "insecure"
+        dest: "{{ ansible_env.HOME }}/.curlrc"
+        mode: '0644'
+
+    - name: 공통 기본 패키지 설치 (SSL 우회 환경변수 적용)
+      shell: |
+        export HOMEBREW_NO_AUTO_UPDATE=1
+        export HOMEBREW_CURLRC=1
+        export HOMEBREW_NO_ANALYTICS=1
+        /opt/homebrew/bin/brew install {{ item }}
+      environment:
+        PATH: "/opt/homebrew/bin:{{ ansible_env.PATH }}"
+      loop: "{{ common_packages }}"  # group_vars/all.yml에서 로드
+      ignore_errors: yes
+
+    - name: 공통 디렉토리 생성
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+      loop: "{{ common_directories }}"  # group_vars/all.yml에서 로드
+
+- name: iOS CI 서버 전용 패키지 설치
+  hosts: ci_servers
+  # vars 섹션 제거 - group_vars/ci_servers.yml에서 로드됨
+      
+  tasks:
+    - name: iOS 개발 도구 설치 (SSL 우회)
+      shell: |
+        export HOMEBREW_NO_AUTO_UPDATE=1
+        export HOMEBREW_CURLRC=1
+        export HOMEBREW_NO_ANALYTICS=1
+        /opt/homebrew/bin/brew install {{ item }}
+      environment:
+        PATH: "/opt/homebrew/bin:{{ ansible_env.PATH }}"
+      loop: "{{ ios_packages }}"  # group_vars/ci_servers.yml에서 로드
+      ignore_errors: yes
+
+    - name: iOS 프로젝트 디렉토리 생성
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+      loop: "{{ ios_directories }}"  # group_vars/ci_servers.yml에서 로드
+
+- name: Android 서버 전용 패키지 설치
+  hosts: docker_servers
+  # vars 섹션 제거 - group_vars/docker_servers.yml에서 로드됨
+      
+  tasks:
+    - name: Android 개발 도구 설치 (SSL 우회)
+      shell: |
+        export HOMEBREW_NO_AUTO_UPDATE=1
+        export HOMEBREW_CURLRC=1
+        export HOMEBREW_NO_ANALYTICS=1
+        /opt/homebrew/bin/brew install {{ item }}
+      environment:
+        PATH: "/opt/homebrew/bin:{{ ansible_env.PATH }}"
+      loop: "{{ android_packages }}"  # group_vars/docker_servers.yml에서 로드
+      ignore_errors: yes
+
+    - name: Android 프로젝트 디렉토리 생성
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+      loop: "{{ android_directories }}"  # group_vars/docker_servers.yml에서 로드
+
+- name: Oh My Zsh 및 agnoster 테마 설정
+  hosts: all_macs
+  tasks:
+    - name: Oh My Zsh 설치 확인
+      stat:
+        path: "{{ ansible_env.HOME }}/.oh-my-zsh"
+      register: omz_exists
+
+    - name: Oh My Zsh 설치 (필요시)
+      shell: |
+        sh -c "$(curl -fsSL https://raw.github.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
+      when: not omz_exists.stat.exists
+      ignore_errors: yes
+
+    - name: Oh My Zsh 플러그인 설치
+      git:
+        repo: "{{ omz_plugins[item].repo }}"
+        dest: "{{ ansible_env.HOME }}/.oh-my-zsh/{{ omz_plugins[item].dest }}"
+        clone: yes
+        update: yes
+      loop:
+        - zsh-autosuggestions
+        - zsh-syntax-highlighting
+      ignore_errors: yes
+
+    - name: agnoster 테마 및 통합 설정
+      copy:
+        content: |
+          # Oh My Zsh 설정
+          export ZSH="$HOME/.oh-my-zsh"
+          ZSH_THEME="agnoster"
+          
+          # 플러그인 설정
+          plugins=(git zsh-autosuggestions zsh-syntax-highlighting)
+          
+          # Oh My Zsh 로드
+          source $ZSH/oh-my-zsh.sh
+          
+          # Homebrew SSL 우회 설정
+          export HOMEBREW_NO_AUTO_UPDATE={{ ssl_bypass_env.HOMEBREW_NO_AUTO_UPDATE }}
+          export HOMEBREW_CURLRC={{ ssl_bypass_env.HOMEBREW_CURLRC }}
+          export HOMEBREW_NO_ANALYTICS={{ ssl_bypass_env.HOMEBREW_NO_ANALYTICS }}
+          export HOMEBREW_NO_INSECURE_REDIRECT={{ ssl_bypass_env.HOMEBREW_NO_INSECURE_REDIRECT }}
+          export HOMEBREW_CURL_RETRIES={{ ssl_bypass_env.HOMEBREW_CURL_RETRIES }}
+          
+          # Homebrew PATH 설정
+          eval "$(/opt/homebrew/bin/brew shellenv)"
+          
+          # agnoster 테마 설정
+          DEFAULT_USER="{{ ansible_user }}"
+          
+          # 유용한 aliases
+          alias ll='ls -la'
+          alias la='ls -A'
+          alias ..='cd ..'
+          alias ...='cd ../..'
+          alias brewup='brew update && brew upgrade && brew cleanup'
+          alias jenkins-start='brew services start jenkins-lts'
+          alias jenkins-stop='brew services stop jenkins-lts'
+          alias jenkins-status='brew services list | grep jenkins'
+        dest: "{{ ansible_env.HOME }}/.zshrc"
+        mode: '0644'
+        
+- name: 설치 완료 확인
+  hosts: all_macs
+  tasks:
+    - name: 설치된 패키지 확인
+      shell: /opt/homebrew/bin/brew list --formula
+      register: installed_packages
+      environment:
+        PATH: "/opt/homebrew/bin:{{ ansible_env.PATH }}"
+
+    - name: 설치 완료 메시지
+      debug:
+        msg: |
+          =================================
+          {{ inventory_hostname }} 설치 완료!
+          설치된 패키지 수: {{ installed_packages.stdout_lines | length }}
+          agnoster 테마 적용됨!
+          =================================

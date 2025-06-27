@@ -1,0 +1,188 @@
+---
+- name: 시스템 서비스 관리
+  hosts: all_macs
+  gather_facts: yes
+  vars_prompt:
+    - name: "action"
+      prompt: "작업을 선택하세요 (start/stop/restart/status)"
+      default: "status"
+      private: no
+
+  tasks:
+    - name: ansible 로그 디렉토리 생성
+      file:
+        path: "{{ ansible_env.HOME }}/ansible"
+        state: directory
+        mode: '0755'
+
+    - name: CI 서버 서비스 관리
+      block:
+        - name: Jenkins 서비스 관리
+          shell: /opt/homebrew/bin/brew services {{ action }} jenkins-lts
+          environment:
+            PATH: "/opt/homebrew/bin:{{ ansible_env.PATH }}"
+          register: jenkins_result
+          ignore_errors: yes
+          when: action in ['start', 'stop', 'restart']
+
+        - name: Grafana 서비스 관리
+          shell: /opt/homebrew/bin/brew services {{ action }} grafana
+          environment:
+            PATH: "/opt/homebrew/bin:{{ ansible_env.PATH }}"
+          register: grafana_result
+          ignore_errors: yes
+          when: action in ['start', 'stop', 'restart']
+
+        - name: Prometheus 서비스 관리
+          shell: /opt/homebrew/bin/brew services {{ action }} prometheus
+          environment:
+            PATH: "/opt/homebrew/bin:{{ ansible_env.PATH }}"
+          register: prometheus_result
+          ignore_errors: yes
+          when: action in ['start', 'stop', 'restart']
+
+      when: inventory_hostname in groups['ci_servers']
+
+    - name: Docker 서버 서비스 관리
+      block:
+        - name: Jenkins 서비스 관리 (Docker 서버)
+          shell: /opt/homebrew/bin/brew services {{ action }} jenkins-lts
+          environment:
+            PATH: "/opt/homebrew/bin:{{ ansible_env.PATH }}"
+          register: jenkins_docker_result
+          ignore_errors: yes
+          when: action in ['start', 'stop', 'restart']
+
+        - name: Docker 상태 확인 (재시작하지 않음)
+          shell: |
+            if command -v docker >/dev/null 2>&1; then
+              echo "=== Docker 상태 ==="
+              docker version --format "Docker: {{.Server.Version}}" 2>/dev/null || echo "Docker 서버 연결 실패"
+              echo ""
+              echo "=== 실행 중인 컨테이너 ==="
+              docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null || echo "컨테이너 정보 확인 실패"
+              echo ""
+              echo "⚠️  Docker는 안전을 위해 자동 재시작하지 않습니다"
+            else
+              echo "Docker not installed"
+            fi
+          register: docker_status
+          when: action == 'status'
+
+      when: inventory_hostname in groups['docker_servers']
+
+    - name: 모든 서비스 상태 확인
+      shell: /opt/homebrew/bin/brew services list
+      environment:
+        PATH: "/opt/homebrew/bin:{{ ansible_env.PATH }}"
+      register: all_services_status
+
+    - name: 포트 사용 현황 확인
+      shell: |
+        echo "=== 주요 포트 사용 현황 ==="
+        lsof -i :3000 2>/dev/null | head -2 || echo "포트 3000: 사용 안함"
+        lsof -i :8080 2>/dev/null | head -2 || echo "포트 8080: 사용 안함"
+        lsof -i :9090 2>/dev/null | head -2 || echo "포트 9090: 사용 안함"
+      register: port_status
+
+    - name: 서비스 상태 요약 리포트
+      debug:
+        msg: |
+          ============================================
+          {{ inventory_hostname }} 서비스 상태 ✅
+          ============================================
+          
+          {% set running_services = [] %}
+          {% for line in all_services_status.stdout_lines %}
+          {% if 'started' in line %}
+          {% set _ = running_services.append(line.split()[0]) %}
+          {% endif %}
+          {% endfor %}
+          
+          🟢 실행 중인 서비스: {{ running_services | join(', ') }}
+          
+          🌐 접속 URL:
+          {% if 'jenkins-lts' in running_services %}
+          📊 Jenkins: http://{{ inventory_hostname }}:8080
+          {% endif %}
+          {% if 'grafana' in running_services %}
+          📈 Grafana: http://{{ inventory_hostname }}:3000
+          {% endif %}
+          {% if 'prometheus' in running_services %}
+          🔍 Prometheus: http://{{ inventory_hostname }}:9090
+          {% endif %}
+          
+          {% if action in ['start', 'stop', 'restart'] %}
+          🔄 작업 결과: {{ action.upper() }} 완료
+          {% endif %}
+          ============================================
+
+    - name: 상세 상태 리포트 (파일로 저장)
+      debug:
+        msg: |
+          📋 상세 정보는 로그 파일에 저장됩니다:
+          ~/ansible/service-{{ action }}-{{ ansible_date_time.date }}-{{ ansible_date_time.hour }}{{ ansible_date_time.minute }}.txt
+
+    - name: 상세 서비스 로그 저장
+      copy:
+        content: |
+          ==========================================
+          {{ inventory_hostname }} 서비스 관리 상세 로그
+          실행 시간: {{ ansible_date_time.iso8601 }}
+          작업: {{ action }}
+          ==========================================
+          
+          📋 전체 Homebrew 서비스:
+          {{ all_services_status.stdout }}
+          
+          🔌 포트 사용 현황:
+          {{ port_status.stdout }}
+          
+          {% if inventory_hostname in groups['docker_servers'] and docker_status is defined and docker_status.stdout is defined %}
+          🐳 Docker 컨테이너:
+          {{ docker_status.stdout }}
+          {% endif %}
+          
+          {% if action in ['start', 'stop', 'restart'] %}
+          📝 작업 결과:
+          {% if inventory_hostname in groups['ci_servers'] %}
+          {% if jenkins_result is defined %}
+          - Jenkins: {{ 'SUCCESS' if jenkins_result.rc == 0 else 'FAILED' }}
+          {% endif %}
+          {% if grafana_result is defined %}
+          - Grafana: {{ 'SUCCESS' if grafana_result.rc == 0 else 'FAILED' }}
+          {% endif %}
+          {% if prometheus_result is defined %}
+          - Prometheus: {{ 'SUCCESS' if prometheus_result.rc == 0 else 'FAILED' }}
+          {% endif %}
+          {% endif %}
+          {% if inventory_hostname in groups['docker_servers'] and jenkins_docker_result is defined %}
+          - Jenkins (Docker): {{ 'SUCCESS' if jenkins_docker_result.rc == 0 else 'FAILED' }}
+          {% endif %}
+          {% endif %}
+          
+          ==========================================
+          완료 시간: {{ ansible_date_time.iso8601 }}
+          ==========================================
+        dest: "{{ ansible_env.HOME }}/ansible/service-{{ action }}-{{ ansible_date_time.date }}-{{ ansible_date_time.hour }}{{ ansible_date_time.minute }}.txt"
+        mode: '0644'
+
+- name: 업데이트 후 자동 재시작 (옵션)
+  hosts: all_macs
+  tasks:
+    - name: 업데이트 후 서비스 재시작 확인
+      debug:
+        msg: |
+          💡 업데이트 후 서비스 재시작이 필요한 경우:
+          
+          자동 재시작 (Jenkins, Grafana, Prometheus만):
+          ansible-playbook playbooks/system-restart.yml -e "action=restart"
+          
+          개별 재시작:
+          ansible {{ inventory_hostname }} -a "brew services restart jenkins-lts"
+          ansible {{ inventory_hostname }} -a "brew services restart grafana"
+          ansible {{ inventory_hostname }} -a "brew services restart prometheus"
+          
+          ⚠️  Docker는 안전을 위해 수동으로 관리하세요:
+          - Docker Desktop 재시작 (GUI에서)
+          - 개별 컨테이너 재시작: docker restart <container_name>

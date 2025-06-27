@@ -1,0 +1,18 @@
+---
+# Android Docker 서버 전용 패키지
+android_packages:
+  - jenkins-lts
+  - docker
+  - docker-compose
+  - rbenv
+  - ruby-build
+  - fastlane
+  - cocoapods
+  - fzf
+  - dive
+
+# Android 서버 전용 디렉토리
+android_directories:
+  - "{{ ansible_env.HOME }}/android-projects"
+  - "{{ ansible_env.HOME }}/android-builds"
+  - "{{ ansible_env.HOME }}/docker-projects"

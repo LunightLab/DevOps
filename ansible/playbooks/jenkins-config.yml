@@ -1,0 +1,206 @@
+---
+- name: Jenkins 원본 설정 파일 수정
+  hosts: all_macs
+  gather_facts: yes
+  vars:
+    jenkins_port: "8081"
+
+  tasks:
+    - name: ansible 로그 디렉토리 생성
+      file:
+        path: "{{ ansible_env.HOME }}/ansible"
+        state: directory
+        mode: '0755'
+
+    - name: Homebrew prefix 확인
+      shell: /opt/homebrew/bin/brew --prefix
+      environment:
+        PATH: "/opt/homebrew/bin:{{ ansible_env.PATH }}"
+      register: homebrew_prefix
+
+    - name: Jenkins 설치 경로 및 버전 확인
+      shell: |
+        echo "=== Jenkins 설치 정보 ==="
+        /opt/homebrew/bin/brew list --versions jenkins-lts
+        echo ""
+        echo "=== Cellar 디렉토리 확인 ==="
+        ls -la {{ homebrew_prefix.stdout }}/Cellar/jenkins-lts/
+        echo ""
+        echo "=== 현재 심링크 ==="
+        ls -la {{ homebrew_prefix.stdout }}/opt/jenkins-lts
+      environment:
+        PATH: "/opt/homebrew/bin:{{ ansible_env.PATH }}"
+      register: jenkins_info
+
+    - name: Jenkins 버전 추출
+      shell: /opt/homebrew/bin/brew list --versions jenkins-lts | awk '{print $2}'
+      environment:
+        PATH: "/opt/homebrew/bin:{{ ansible_env.PATH }}"
+      register: jenkins_version
+
+    - name: 원본 plist 파일 경로 설정
+      set_fact:
+        jenkins_cellar_path: "{{ homebrew_prefix.stdout }}/Cellar/jenkins-lts/{{ jenkins_version.stdout }}"
+        original_plist_path: "{{ homebrew_prefix.stdout }}/Cellar/jenkins-lts/{{ jenkins_version.stdout }}/homebrew.mxcl.jenkins-lts.plist"
+
+    - name: 원본 plist 파일 확인
+      shell: |
+        echo "=== 원본 plist 파일 위치 ==="
+        ls -la {{ original_plist_path }}
+        echo ""
+        echo "=== 원본 plist 내용 ==="
+        cat {{ original_plist_path }}
+      register: original_plist_content
+
+    - name: Java 경로 자동 감지
+      shell: |
+        if [ -f "{{ homebrew_prefix.stdout }}/opt/openjdk@21/bin/java" ]; then
+          echo "{{ homebrew_prefix.stdout }}/opt/openjdk@21/bin/java"
+        elif [ -f "{{ homebrew_prefix.stdout }}/opt/openjdk@17/bin/java" ]; then
+          echo "{{ homebrew_prefix.stdout }}/opt/openjdk@17/bin/java"
+        elif [ -f "{{ homebrew_prefix.stdout }}/opt/openjdk@11/bin/java" ]; then
+          echo "{{ homebrew_prefix.stdout }}/opt/openjdk@11/bin/java"
+        elif [ -f "{{ homebrew_prefix.stdout }}/opt/openjdk/bin/java" ]; then
+          echo "{{ homebrew_prefix.stdout }}/opt/openjdk/bin/java"
+        else
+          which java || echo "/usr/bin/java"
+        fi
+      register: detected_java_path
+
+    - name: Jenkins 서비스 중지
+      shell: /opt/homebrew/bin/brew services stop jenkins-lts
+      environment:
+        PATH: "/opt/homebrew/bin:{{ ansible_env.PATH }}"
+      ignore_errors: yes
+
+    - name: 원본 plist 파일 백업
+      copy:
+        src: "{{ original_plist_path }}"
+        dest: "{{ ansible_env.HOME }}/ansible/original-jenkins-plist-backup-{{ jenkins_version.stdout }}-{{ ansible_date_time.date }}.plist"
+        mode: '0644'
+        remote_src: yes
+
+    - name: 원본 plist 파일 수정
+      copy:
+        content: |
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+                  <key>Label</key>
+                  <string>homebrew.mxcl.jenkins-lts</string>
+                  <key>LimitLoadToSessionType</key>
+                  <array>
+                          <string>Aqua</string>
+                          <string>Background</string>
+                          <string>LoginWindow</string>
+                          <string>StandardIO</string>
+                          <string>System</string>
+                  </array>
+                  <key>ProgramArguments</key>
+                  <array>
+                          <string>{{ detected_java_path.stdout }}</string>
+                          <string>-Dmail.smtp.starttls.enable=true</string>
+                          <string>-Dhudson.plugins.git.GitSCM.ALLOW_LOCAL_CHECKOUT=true</string>
+                          <string>-jar</string>
+                          <string>{{ homebrew_prefix.stdout }}/opt/jenkins-lts/libexec/jenkins.war</string>
+                          <string>--httpListenAddress={{ ansible_host }}</string>
+                          <string>--httpPort={{ jenkins_port }}</string>
+                  </array>
+                  <key>RunAtLoad</key>
+                  <true/>
+          </dict>
+          </plist>
+        dest: "{{ original_plist_path }}"
+        mode: '0644'
+        backup: yes
+
+    - name: LaunchAgents의 기존 plist 삭제 (새로 복사되도록)
+      shell: rm -f ~/Library/LaunchAgents/homebrew.mxcl.jenkins-lts.plist
+
+    - name: Jenkins 서비스 재시작
+      shell: |
+        /opt/homebrew/bin/brew services start jenkins-lts
+        sleep 10
+      environment:
+        PATH: "/opt/homebrew/bin:{{ ansible_env.PATH }}"
+
+    - name: 수정 결과 확인
+      shell: |
+        echo "=== 수정된 원본 plist ==="
+        cat {{ original_plist_path }} | grep -A 2 "httpListenAddress\|httpPort"
+        echo ""
+        echo "=== LaunchAgents plist ==="
+        cat ~/Library/LaunchAgents/homebrew.mxcl.jenkins-lts.plist | grep -A 2 "httpListenAddress\|httpPort"
+        echo ""
+        echo "=== Jenkins 프로세스 ==="
+        sleep 5
+        ps aux | grep jenkins | grep java || echo "Jenkins 프로세스 없음"
+        echo ""
+        echo "=== 포트 확인 ==="
+        lsof -i :{{ jenkins_port }} || echo "포트 {{ jenkins_port }} 사용 없음"
+      register: verification_result
+
+    - name: 결과 리포트
+      debug:
+        msg: |
+          ==========================================
+          {{ inventory_hostname }} 원본 Jenkins 설정 수정 완료! ✅
+          ==========================================
+          
+          📁 수정된 원본 파일:
+          {{ original_plist_path }}
+          
+          🔧 적용된 설정:
+          - IP: {{ ansible_host }}
+          - Port: {{ jenkins_port }}
+          - Java: {{ detected_java_path.stdout }}
+          - Git Local Checkout: 활성화
+          
+          📋 Jenkins 정보:
+          {{ jenkins_info.stdout }}
+          
+          🔍 확인 결과:
+          {{ verification_result.stdout }}
+          
+          🌐 접속 URL:
+          http://{{ ansible_host }}:{{ jenkins_port }}
+          
+          📄 백업 파일:
+          ~/ansible/original-jenkins-plist-backup-{{ jenkins_version.stdout }}-{{ ansible_date_time.date }}.plist
+          
+          ⚠️  주의사항:
+          brew upgrade jenkins-lts 시 원본 파일이 새 버전으로 교체됩니다.
+          업그레이드 후 이 플레이북을 다시 실행하세요.
+          ==========================================
+
+    - name: 설정 로그 저장
+      copy:
+        content: |
+          ==========================================
+          {{ inventory_hostname }} 원본 Jenkins 설정 변경 로그
+          실행 시간: {{ ansible_date_time.iso8601 }}
+          ==========================================
+          
+          📦 Jenkins 버전: {{ jenkins_version.stdout }}
+          📁 원본 파일 경로: {{ original_plist_path }}
+          
+          🔧 적용된 설정:
+          - IP 주소: {{ ansible_host }}
+          - 포트: {{ jenkins_port }}
+          - Java 경로: {{ detected_java_path.stdout }}
+          - Git Local Checkout: 활성화
+          
+          📋 원본 내용 (수정 전):
+          {{ original_plist_content.stdout }}
+          
+          🔍 수정 후 확인:
+          {{ verification_result.stdout }}
+          
+          📄 백업 파일: ~/ansible/original-jenkins-plist-backup-{{ jenkins_version.stdout }}-{{ ansible_date_time.date }}.plist
+          
+          ==========================================
+          완료 시간: {{ ansible_date_time.iso8601 }}
+          ==========================================
+        dest: "{{ ansible_env.HOME }}/ansible/jenkins-source-config-{{ ansible_date_time.date }}-{{ ansible_date_time.hour }}{{ ansible_date_time.minute }}.txt"
+        mode: '0644'
