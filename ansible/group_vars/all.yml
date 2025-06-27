@@ -1,0 +1,43 @@
+# 공통 패키지 목록 (모든 서버)
+common_packages:
+  - git
+  - git-lfs
+  - curl
+  - wget
+  - jq
+  - tree
+  - htop
+  - fastfetch  # neofetch 대신 fastfetch 사용 (더 빠르고 현재 지원됨)
+  - terminal-notifier
+  - node
+  - python@3.13
+  - ruby
+  - openjdk
+  - openjdk@21
+  - zsh-autosuggestions
+  - zsh-completions
+  - zsh-syntax-highlighting
+  - osx-cpu-temp
+  - grafana
+  - prometheus
+
+# SSL 우회 환경변수
+ssl_bypass_env:
+  HOMEBREW_NO_AUTO_UPDATE: "1"
+  HOMEBREW_CURLRC: "1"
+  HOMEBREW_NO_ANALYTICS: "1"
+  HOMEBREW_NO_INSECURE_REDIRECT: "1"
+  HOMEBREW_CURL_RETRIES: "3"
+
+# Oh My Zsh 플러그인 리포지토리
+omz_plugins:
+  zsh-autosuggestions:
+    repo: "https://github.com/zsh-users/zsh-autosuggestions"
+    dest: "custom/plugins/zsh-autosuggestions"
+  zsh-syntax-highlighting:
+    repo: "https://github.com/zsh-users/zsh-syntax-highlighting.git"
+    dest: "custom/plugins/zsh-syntax-highlighting"
+
+# 공통 디렉토리
+common_directories:
+  - "{{ ansible_env.HOME }}/.jenkins"

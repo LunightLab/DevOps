@@ -1,0 +1,17 @@
+---
+# iOS CI 서버 전용 패키지
+ios_packages:
+  - jenkins-lts
+  - cocoapods
+  - fastlane
+  - carthage
+  - ios-deploy
+  - libimobiledevice
+  - screenresolution
+  - pipx
+  - bfg
+
+# iOS 서버 전용 디렉토리
+ios_directories:
+  - "{{ ansible_env.HOME }}/ios-projects"
+  - "{{ ansible_env.HOME }}/ios-builds"
