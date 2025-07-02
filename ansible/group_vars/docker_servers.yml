@@ -1,9 +1,6 @@
----
 # Android Docker 서버 전용 패키지
 android_packages:
   - jenkins-lts
-  - docker
-  - docker-compose
   - rbenv
   - ruby-build
   - fastlane
@@ -11,8 +8,28 @@ android_packages:
   - fzf
   - dive
 
+# Docker Desktop (Cask 애플리케이션)
+android_cask_packages:
+  - docker
+
 # Android 서버 전용 디렉토리
 android_directories:
   - "{{ ansible_env.HOME }}/android-projects"
   - "{{ ansible_env.HOME }}/android-builds"
   - "{{ ansible_env.HOME }}/docker-projects"
+
+# Docker 환경 설정
+docker_config:
+  # Docker Desktop 자동 시작 설정
+  auto_start: false
+  
+  # Docker 메모리 설정 (GB)
+  memory_limit: 8
+  
+  # Docker CPU 설정
+  cpu_limit: 4
+  
+  # Docker 환경변수
+  docker_env:
+    DOCKER_SCAN_SUGGEST: "false"
+    DOCKER_CLI_HINTS: "false"

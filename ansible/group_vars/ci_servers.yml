@@ -15,3 +15,16 @@ ios_packages:
 ios_directories:
   - "{{ ansible_env.HOME }}/ios-projects"
   - "{{ ansible_env.HOME }}/ios-builds"
+
+# iOS 개발 환경 설정
+ios_config:
+  # Xcode Command Line Tools 자동 설정
+  xcode_cli_tools: true
+  
+  # iOS 시뮬레이터 관련 설정
+  simulator_setup: true
+  
+  # Fastlane 환경변수
+  fastlane_env:
+    FASTLANE_SKIP_UPDATE_CHECK: "1"
+    FASTLANE_HIDE_CHANGELOG: "1"

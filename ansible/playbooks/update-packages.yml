@@ -2,6 +2,9 @@
 - name: 패키지 업데이트 및 관리
   hosts: all_macs
   gather_facts: yes
+  vars_files:
+    - group_vars/all.yml
+    
   tasks:
     - name: 업데이트 시작 메시지
       debug:
@@ -30,12 +33,8 @@
         mode: '0644'
 
     - name: Homebrew 저장소 업데이트
-      shell: |
-        export HOMEBREW_NO_AUTO_UPDATE=1
-        export HOMEBREW_CURLRC=1
-        /opt/homebrew/bin/brew update
-      environment:
-        PATH: "/opt/homebrew/bin:{{ ansible_env.PATH }}"
+      shell: /opt/homebrew/bin/brew update
+      environment: "{{ homebrew_env }}"
       register: brew_update_result
       ignore_errors: yes
 
@@ -64,35 +63,145 @@
       debug:
         msg: |
           ⚠️  Docker Desktop이 실행 중입니다!
-          안전을 위해 패키지 업데이트를 건너뜁니다.
+          안전을 위해 Docker 관련 패키지만 제외하고 업데이트합니다.
           
-          Docker를 정지한 후 다시 실행하세요:
+          Docker 안전 업데이트 방법:
           1. Docker Desktop 종료
-          2. ansible-playbook -i inventory.ini update-packages.yml 재실행
+          2. ansible-playbook update-packages.yml 재실행
       when: 
         - inventory_hostname in groups['docker_servers']
         - docker_running_check.rc == 0
         - outdated_packages.stdout != ""
 
-    - name: 패키지 업그레이드 실행
-      shell: |
-        export HOMEBREW_NO_AUTO_UPDATE=1
-        export HOMEBREW_CURLRC=1
-        /opt/homebrew/bin/brew upgrade
+    # Docker 서버에서 실행 중인 컨테이너 수 확인
+    - name: 실행 중인 컨테이너 수 확인
+      shell: docker ps -q 2>/dev/null | wc -l | xargs
+      register: running_containers_count
+      ignore_errors: yes
+      failed_when: false
+      when: 
+        - inventory_hostname in groups['docker_servers']
+        - docker_running_check.rc == 0
+
+    # Docker 관련 업데이트 가능한 패키지 확인
+    - name: Docker 관련 업데이트 패키지 확인
+      shell: /opt/homebrew/bin/brew outdated | grep -E "(docker|colima|docker-compose)"
+      register: docker_outdated_packages
       environment:
         PATH: "/opt/homebrew/bin:{{ ansible_env.PATH }}"
+      ignore_errors: yes
+      failed_when: false
+      when: inventory_hostname in groups['docker_servers']
+
+    # 케이스 1: Docker 서버가 아닌 경우 - 전체 업데이트
+    - name: 일반 서버 패키지 업그레이드
+      shell: /opt/homebrew/bin/brew upgrade
+      environment: "{{ homebrew_env }}"
       register: brew_upgrade_result
       ignore_errors: yes
       when: 
         - outdated_packages.stdout != ""
-        - not (inventory_hostname in groups['docker_servers'] and docker_running_check.rc == 0)
+        - inventory_hostname not in groups['docker_servers']
 
-    - name: 업그레이드 건너뛰기 메시지
+    # 케이스 2: Docker 서버이지만 Docker Desktop 미실행 - 전체 업데이트
+    - name: Docker 서버 전체 업그레이드 (Docker 미실행)
+      shell: /opt/homebrew/bin/brew upgrade
+      environment: "{{ homebrew_env }}"
+      register: docker_stopped_upgrade_result
+      ignore_errors: yes
+      when:
+        - outdated_packages.stdout != ""
+        - inventory_hostname in groups['docker_servers']
+        - docker_running_check.rc != 0
+
+    # 케이스 3: Docker 실행 중이지만 컨테이너 없음 - 전체 업데이트
+    - name: Docker 실행 중 but 컨테이너 없음 - 전체 업그레이드
+      shell: /opt/homebrew/bin/brew upgrade
+      environment: "{{ homebrew_env }}"
+      register: docker_no_containers_upgrade_result
+      ignore_errors: yes
+      when:
+        - outdated_packages.stdout != ""
+        - inventory_hostname in groups['docker_servers']
+        - docker_running_check.rc == 0
+        - running_containers_count.stdout|default('0')|int == 0
+
+    # 케이스 4: Docker 실행 중 + 컨테이너 있음 - Docker 패키지만 제외하고 업데이트
+    - name: Docker 관련 패키지 임시 pin (업데이트 제외)
+      shell: |
+        DOCKER_PKGS=$(/opt/homebrew/bin/brew outdated | grep -E "(docker|colima|docker-compose)" | awk '{print $1}')
+        if [ -n "$DOCKER_PKGS" ]; then
+          echo "$DOCKER_PKGS" | xargs /opt/homebrew/bin/brew pin
+          echo "임시 제외된 Docker 패키지: $DOCKER_PKGS"
+        fi
+      environment:
+        PATH: "/opt/homebrew/bin:{{ ansible_env.PATH }}"
+      register: docker_pin_result
+      when:
+        - outdated_packages.stdout != ""
+        - inventory_hostname in groups['docker_servers']
+        - docker_running_check.rc == 0
+        - running_containers_count.stdout|default('0')|int > 0
+        - docker_outdated_packages.stdout != ""
+
+    - name: Docker 제외하고 나머지 패키지 업그레이드
+      shell: /opt/homebrew/bin/brew upgrade
+      environment: "{{ homebrew_env }}"
+      register: docker_selective_upgrade_result
+      ignore_errors: yes
+      when:
+        - outdated_packages.stdout != ""
+        - inventory_hostname in groups['docker_servers']
+        - docker_running_check.rc == 0
+        - running_containers_count.stdout|default('0')|int > 0
+
+    - name: Docker 관련 패키지 pin 해제
+      shell: |
+        DOCKER_PKGS=$(/opt/homebrew/bin/brew list --pinned | grep -E "(docker|colima|docker-compose)")
+        if [ -n "$DOCKER_PKGS" ]; then
+          echo "$DOCKER_PKGS" | xargs /opt/homebrew/bin/brew unpin
+          echo "Pin 해제된 Docker 패키지: $DOCKER_PKGS"
+        fi
+      environment:
+        PATH: "/opt/homebrew/bin:{{ ansible_env.PATH }}"
+      when:
+        - inventory_hostname in groups['docker_servers']
+        - docker_running_check.rc == 0
+        - running_containers_count.stdout|default('0')|int > 0
+        - docker_pin_result is defined
+
+    # Docker 업데이트 보류 안내
+    - name: Docker 업데이트 보류 안내
       debug:
-        msg: "업그레이드할 패키지가 없습니다."
+        msg: |
+          🐳 Docker 관련 패키지 업데이트 보류됨
+          
+          현재 상태:
+          - 실행 중인 컨테이너: {{ running_containers_count.stdout | default('0') }}개
+          - 업데이트 대기 중: {{ docker_outdated_packages.stdout_lines | length | default(0) }}개 Docker 패키지
+          
+          ✅ 나머지 패키지는 정상 업데이트 완료
+          
+          🔄 Docker 안전 업데이트 방법:
+          1. 컨테이너 안전 종료: docker-compose down
+          2. Docker Desktop 종료
+          3. 업데이트 재실행: ansible-playbook update-packages.yml
+          4. Docker 재시작 후 컨테이너 복구
+          
+          또는 수동으로:
+          brew upgrade docker docker-compose
+      when:
+        - inventory_hostname in groups['docker_servers']
+        - docker_running_check.rc == 0
+        - running_containers_count.stdout|default('0')|int > 0
+        - docker_outdated_packages.stdout != ""
+
+    - name: 업그레이드 완료 메시지 (업데이트 없음)
+      debug:
+        msg: "✅ 업그레이드할 패키지가 없습니다."
       when: outdated_packages.stdout == ""
 
-    # neofetch 정리 작업 추가
+    # deprecated 패키지 정리 작업 추가
     - name: deprecated neofetch 확인 및 정리
       shell: /opt/homebrew/bin/brew list | grep neofetch
       register: neofetch_check
@@ -109,28 +218,20 @@
       ignore_errors: yes
 
     - name: fastfetch 설치 (neofetch 대체)
-      shell: |
-        export HOMEBREW_NO_AUTO_UPDATE=1
-        export HOMEBREW_CURLRC=1
-        /opt/homebrew/bin/brew install fastfetch
-      environment:
-        PATH: "/opt/homebrew/bin:{{ ansible_env.PATH }}"
+      shell: /opt/homebrew/bin/brew install fastfetch
+      environment: "{{ homebrew_env }}"
       when: neofetch_check.rc == 0
       ignore_errors: yes
 
     - name: 불필요한 패키지 정리
-      shell: |
-        export HOMEBREW_NO_AUTO_UPDATE=1
-        /opt/homebrew/bin/brew cleanup --prune=all
+      shell: /opt/homebrew/bin/brew cleanup --prune=all
       environment:
         PATH: "/opt/homebrew/bin:{{ ansible_env.PATH }}"
       register: brew_cleanup_result
       ignore_errors: yes
 
     - name: 사용하지 않는 의존성 자동 제거
-      shell: |
-        export HOMEBREW_NO_AUTO_UPDATE=1
-        /opt/homebrew/bin/brew autoremove
+      shell: /opt/homebrew/bin/brew autoremove
       environment:
         PATH: "/opt/homebrew/bin:{{ ansible_env.PATH }}"
       register: brew_autoremove_result
@@ -234,10 +335,6 @@
           
           💾 디스크 사용량: {{ disk_usage.stdout.split() | last }}
           
-          ⚠️ Homebrew Doctor 결과:
-          {{ brew_doctor_result.stdout | default('정상') }}
-          
-          
           🖥️ 시스템 상태:
           {{ system_uptime.stdout }}
           {{ cpu_usage.stdout }}
@@ -259,8 +356,6 @@
           - 업데이트 전: ~/ansible/package-versions-before-{{ ansible_date_time.date }}.txt
           - 업데이트 후: ~/ansible/package-versions-after-{{ ansible_date_time.date }}.txt
           
-          📊 상세 로그: ~/ansible/update-log-{{ ansible_date_time.date }}-{{ ansible_date_time.hour }}{{ ansible_date_time.minute }}.txt
-          
           ==========================================
           실행 완료: {{ ansible_date_time.iso8601 }}
           ==========================================
@@ -275,7 +370,6 @@
           
           📦 업데이트 가능했던 패키지: {{ outdated_packages.stdout_lines | length | default(0) }}개
           🗑️  정리된 캐시: {{ brew_cleanup_result.stdout_lines | length | default(0) }}개 항목
-          
           🧹 자동 제거된 의존성: {{ brew_autoremove_result.stdout_lines | length | default(0) }}개 패키지
           
           🖥️  시스템 상태:
