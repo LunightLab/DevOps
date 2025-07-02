@@ -1,0 +1,224 @@
+---
+# =============================================================================
+# macOS 모니터링 시스템 용량 정리 Ansible Playbook
+# 간단한 데이터 정리 전용
+# =============================================================================
+
+- name: Monitoring System Cleanup
+  hosts: all_macs
+  gather_facts: yes
+  become: false
+  
+  vars:
+    # 경로 설정
+    homebrew_prefix: "/opt/homebrew"
+    telegraf_log_path: "{{ homebrew_prefix }}/var/log/telegraf.log"
+    grafana_data_path: "{{ homebrew_prefix }}/var/lib/grafana"
+    influxdb_data_path: "{{ homebrew_prefix }}/var/lib/influxdb"
+    backup_path: "{{ ansible_env.HOME }}/monitoring_backups"
+    
+    # 정리 설정
+    max_log_size_mb: 100
+    backup_retention_days: 30
+    influxdb_org: "nh"
+
+  tasks:
+    # ==========================================================================
+    # 1. 현재 용량 확인
+    # ==========================================================================
+    
+    - name: Check current disk usage
+      command: df -h /
+      register: disk_usage
+      changed_when: false
+      tags: ['check']
+
+    - name: Check monitoring data sizes
+      command: du -sh {{ item }}
+      register: data_sizes
+      failed_when: false
+      changed_when: false
+      loop:
+        - "{{ influxdb_data_path }}"
+        - "{{ grafana_data_path }}"
+        - "{{ telegraf_log_path }}"
+      tags: ['check']
+
+    - name: Display current usage
+      debug:
+        msg: |
+          Server: {{ inventory_hostname }}
+          Disk Usage: {{ disk_usage.stdout_lines[1] }}
+          InfluxDB: {{ data_sizes.results[0].stdout.split()[0] if data_sizes.results[0].rc == 0 else 'N/A' }}
+          Grafana: {{ data_sizes.results[1].stdout.split()[0] if data_sizes.results[1].rc == 0 else 'N/A' }}
+          Telegraf Log: {{ data_sizes.results[2].stdout.split()[0] if data_sizes.results[2].rc == 0 else 'N/A' }}
+      tags: ['check']
+
+    # ==========================================================================
+    # 2. Telegraf 로그 정리
+    # ==========================================================================
+    
+    - name: Check Telegraf log size
+      stat:
+        path: "{{ telegraf_log_path }}"
+      register: telegraf_log_stat
+      tags: ['cleanup']
+
+    - name: Backup and truncate large Telegraf log
+      block:
+        - name: Create backup of large log
+          copy:
+            src: "{{ telegraf_log_path }}"
+            dest: "{{ telegraf_log_path }}.{{ ansible_date_time.date }}.bak"
+            remote_src: yes
+            
+        - name: Truncate log file
+          command: truncate -s 0 "{{ telegraf_log_path }}"
+          become: yes
+          
+        - name: Log cleanup message
+          debug:
+            msg: "{{ inventory_hostname }}: Telegraf log cleaned (was {{ (telegraf_log_stat.stat.size / 1024 / 1024) | round(1) }}MB)"
+      when: 
+        - telegraf_log_stat.stat.exists
+        - telegraf_log_stat.stat.size > (max_log_size_mb * 1024 * 1024)
+      tags: ['cleanup']
+
+    # ==========================================================================
+    # 3. InfluxDB 보존 정책 설정
+    # ==========================================================================
+    
+    - name: Check InfluxDB bucket retention
+      command: influx bucket list --org {{ influxdb_org }}
+      register: bucket_list
+      failed_when: false
+      changed_when: false
+      tags: ['retention']
+
+    - name: Get telegraf bucket ID
+      set_fact:
+        telegraf_bucket_id: "{{ bucket_list.stdout_lines | select('match', '.*telegraf.*') | first | regex_replace('^([a-f0-9]+)\\s+.*', '\\1') }}"
+      when: 
+        - bucket_list.rc == 0
+        - "'telegraf' in bucket_list.stdout"
+      tags: ['retention']
+
+    - name: Set 30-day retention on telegraf bucket
+      command: influx bucket update --id {{ telegraf_bucket_id }} --retention 30d
+      when: 
+        - telegraf_bucket_id is defined
+        - "'infinite' in bucket_list.stdout"
+      tags: ['retention']
+      register: retention_update
+
+    - name: Display retention update result
+      debug:
+        msg: "{{ inventory_hostname }}: InfluxDB retention set to 30 days"
+      when: retention_update is changed
+      tags: ['retention']
+
+    # ==========================================================================
+    # 4. 오래된 백업 파일 정리
+    # ==========================================================================
+    
+    - name: Create backup directory if not exists
+      file:
+        path: "{{ backup_path }}"
+        state: directory
+        mode: '0755'
+      tags: ['cleanup']
+
+    - name: Find old backup files
+      find:
+        paths: "{{ backup_path }}"
+        patterns: "*.tar.gz,*.bak"
+        age: "{{ backup_retention_days }}d"
+      register: old_backups
+      tags: ['cleanup']
+
+    - name: Remove old backup files
+      file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ old_backups.files }}"
+      when: old_backups.files | length > 0
+      tags: ['cleanup']
+
+    - name: Display cleanup results
+      debug:
+        msg: "{{ inventory_hostname }}: Removed {{ old_backups.files | length }} old backup files"
+      when: old_backups.files | length > 0
+      tags: ['cleanup']
+
+    # ==========================================================================
+    # 5. 정리 후 용량 재확인
+    # ==========================================================================
+    
+    - name: Check disk usage after cleanup
+      command: df -h /
+      register: disk_usage_after
+      changed_when: false
+      tags: ['check', 'cleanup']
+
+    - name: Check monitoring data sizes after cleanup
+      command: du -sh {{ item }}
+      register: data_sizes_after
+      failed_when: false
+      changed_when: false
+      loop:
+        - "{{ influxdb_data_path }}"
+        - "{{ grafana_data_path }}"
+        - "{{ telegraf_log_path }}"
+      tags: ['check', 'cleanup']
+
+    - name: Display cleanup summary
+      debug:
+        msg: |
+          === {{ inventory_hostname }} 정리 완료 ===
+          디스크 사용량: {{ disk_usage_after.stdout_lines[1] }}
+          InfluxDB: {{ data_sizes_after.results[0].stdout.split()[0] if data_sizes_after.results[0].rc == 0 else 'N/A' }}
+          Grafana: {{ data_sizes_after.results[1].stdout.split()[0] if data_sizes_after.results[1].rc == 0 else 'N/A' }}
+          Telegraf Log: {{ data_sizes_after.results[2].stdout.split()[0] if data_sizes_after.results[2].rc == 0 else 'N/A' }}
+      tags: ['check', 'cleanup']
+
+    # ==========================================================================
+    # 6. 자동 정리 cron 설정 (선택사항)
+    # ==========================================================================
+    
+    - name: Setup weekly cleanup cron job
+      cron:
+        name: "Weekly monitoring cleanup"
+        weekday: "0"
+        hour: "2"
+        minute: "0"
+        job: "cd {{ playbook_dir }} && ansible-playbook -i hosts monitoring_cleanup.yml --tags cleanup --limit {{ inventory_hostname }}"
+        user: "{{ ansible_user }}"
+      tags: ['cron']
+      when: setup_cron is defined and setup_cron
+
+# ==============================================================================
+# 요약 리포트 (로컬에서 실행)
+# ==============================================================================
+
+- name: Generate Cleanup Summary
+  hosts: localhost
+  gather_facts: no
+  run_once: true
+  
+  tasks:
+    - name: Display overall summary
+      debug:
+        msg: |
+          =======================================
+          모니터링 시스템 정리 완료
+          =======================================
+          처리된 서버:
+          - CI 서버: {{ groups['ci_servers'] | join(', ') }}
+          - Docker 서버: {{ groups['docker_servers'] | join(', ') }}
+          
+          정리 내용:
+          - Telegraf 로그 정리 (100MB 초과 시)
+          - InfluxDB 보존 정책 30일 설정
+          - 오래된 백업 파일 정리 (30일 이상)
+          =======================================
+      tags: ['summary']

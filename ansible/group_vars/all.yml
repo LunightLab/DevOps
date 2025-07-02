@@ -20,14 +20,14 @@ common_packages:
   - osx-cpu-temp
   - grafana
   - prometheus
+  - telegraf
+  - node_exporter
+  # - influxdb
 
-# SSL 우회 환경변수
-ssl_bypass_env:
-  HOMEBREW_NO_AUTO_UPDATE: "1"
-  HOMEBREW_CURLRC: "1"
-  HOMEBREW_NO_ANALYTICS: "1"
-  HOMEBREW_NO_INSECURE_REDIRECT: "1"
-  HOMEBREW_CURL_RETRIES: "3"
+# 안전한 Homebrew 환경변수
+homebrew_env:
+  HOMEBREW_NO_AUTO_UPDATE: "1"  # 자동업데이트 비활성화
+  HOMEBREW_NO_ANALYTICS: "1"  # 분석 비활성화  
 
 # Oh My Zsh 플러그인 리포지토리
 omz_plugins:

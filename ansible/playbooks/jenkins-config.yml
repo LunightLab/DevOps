@@ -141,9 +141,10 @@
         lsof -i :{{ jenkins_port }} || echo "포트 {{ jenkins_port }} 사용 없음"
       register: verification_result
 
-    - name: 결과 리포트
-      debug:
-        msg: |
+    # 리포트 내용을 변수로 분리
+    - name: 리포트 내용 준비
+      set_fact:
+        report_content: |
           ==========================================
           {{ inventory_hostname }} 원본 Jenkins 설정 수정 완료! ✅
           ==========================================
@@ -173,6 +174,11 @@
           brew upgrade jenkins-lts 시 원본 파일이 새 버전으로 교체됩니다.
           업그레이드 후 이 플레이북을 다시 실행하세요.
           ==========================================
+
+    # vars로 정의한 내용을 debug로 출력
+    - name: 결과 리포트
+      debug:
+        var: report_content
 
     - name: 설정 로그 저장
       copy:

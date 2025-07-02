@@ -1,13 +1,13 @@
 
-## Ansible install
+## Ansible install(원격지 Mac)
 
 ```
 brew install ansible
 ```
 
-## ansible ssh key genarate
+## Ansible ssh key genarate
 
-```
+```sh
 # Ansible 전용 키 생성
 ssh-keygen -t ed25519 -f ~/.ssh/ansible_key -C "ansible-mac-servers"
 
@@ -24,11 +24,10 @@ cat ~/.ssh/ansible_key.pub
 
 ```
 
-
-```
+```sh
 # 각 서버에 공개키 복사 (IP 주소를 실제 값으로 변경)
-ssh-copy-id -i ~/.ssh/ansible_key.pub mobile@MAC_STUDIO_1_IP
-ssh-copy-id -i ~/.ssh/ansible_key.pub mobile@MAC_STUDIO_2_IP
+ssh-copy-id -i ~/.ssh/ansible_key.pub mobile@10.88.20.173
+ssh-copy-id -i ~/.ssh/ansible_key.pub jenkins@10.88.20.153
 
 # 연결테스트
  lunight > ssh-copy-id -i ~/.ssh/ansible_key.pub mobile@10.88.20.173
@@ -48,7 +47,7 @@ The authenticity of host '10.88.20.153 (10.88.20.153)' can't be established.
 ED25519 key fingerprint is SHA256:CNZoa6gEOrmDjIceFSclqPGyOT7SdGRgtEwT47QFQTo.
 This key is not known by any other names.
 Are you sure you want to continue connecting (yes/no/[fingerprint])? yes
-/usr/bin/ssh-copy-id: INFO: attempting to log in with the new key(s), to filter out any that are already installed
+/usr/bin/ssh-copy-id: INFO: attempting to log n with the new key(s), to filter out any that are already installed
 /usr/bin/ssh-copy-id: INFO: 1 key(s) remain to be installed -- if you are prompted now it is to install the new keys
 (jenkins@10.88.20.153) Password:
 
@@ -61,8 +60,32 @@ lunight > ssh -i ~/.ssh/ansible_key mobile@10.88.20.173
 lunight > ssh -i ~/.ssh/ansible_key jenkins@10.88.20.153
 ```
 
-## Ansible project directory 생성
+# Ansible file tree
+``` sh
+.
+├── README.md
+├── ansible.cfg
+├── group_vars
+│   ├── all.yml
+│   ├── ci_servers.yml
+│   └── docker_servers.yml
+├── host_vars
+├── inventory.ini
+├── playbooks
+│   ├── gitlab-install.yml
+│   ├── gitlab-offline-organization.yml
+│   ├── gitlab-online-organization.yml
+│   ├── initial-setup.yml
+│   ├── jenkins-config.yml
+│   ├── system-restart.yml
+│   └── update-packages.yml
+└── script
+    ├── gitlab-backup.sh
+    └── gitlab-restore.sh
 ```
+
+## Ansible project directory 생성
+```sh
 # 프로젝트 디렉토리 생성
 mkdir ansible-mac-servers
 cd ansible-mac-servers
@@ -76,14 +99,16 @@ mkdir host_vars
 ```
 
 **1. ansible.cfg (Ansible 설정 파일)**
+```
 [defaults]
 inventory = inventory.ini          # 서버 목록 파일 지정
 private_key_file = ~/.ssh/ansible_key  # SSH 키 경로
 host_key_checking = False         # SSH 호스트 키 확인 생략 (편의상)
 stdout_callback = yaml            # 출력 포맷 (보기 좋게)
+```
 
 **2. inventory.ini (서버 목록 파일)**
-```
+```sh
 # 관리할 서버들의 정보를 정의
 [ci_servers]                      # 그룹명
 mac-studio-ci ansible_host=10.88.20.153 ansible_user=jenkins
@@ -98,17 +123,20 @@ docker_servers
 **역할**: 어떤 서버들을 관리할지 정의하는 서버 목록
 
 **3. playbooks/ (플레이북 디렉토리)**
-```
+```sh
 playbooks/
-├── basic-setup.yml       # 기본 설정 플레이북
-├── jenkins-config.yml    # Jenkins 설정 플레이북
-├── docker-setup.yml     # Docker 설정 플레이북
-└── maintenance.yml      # 유지보수 플레이북
+├── gitlab-install.yml
+├── gitlab-offline-organization.yml
+├── gitlab-online-organization.yml
+├── initial-setup.yml
+├── jenkins-config.yml
+├── system-restart.yml
+└── update-packages.yml
 ```
 **역할**: 실제 작업을 정의하는 YAML 파일들을 저장
 
 **4. group_vars/ (그룹별 변수 디렉토리)**
-```
+```sh
 group_vars/
 ├── all.yml              # 모든 서버에 공통 패키지 추가
 ├── ci_servers.yml       # CI iOS 서버에만 패키지 추가
@@ -116,7 +144,7 @@ group_vars/
 ```
 
 **5. host_vars/ (개별 서버 변수 디렉토리)**
-```
+```sh
 host_vars/
 ├── mac-studio-ci.yml        # 특정 서버만의 변수
 └── mac-studio-docker.yml    # 특정 서버만의 변수
@@ -125,7 +153,7 @@ host_vars/
 ## 테스트
 
 ### ansible.cfg
-```
+```sh
 [defaults]
 inventory = inventory.ini
 private_key_file = ~/.ssh/ansible_key
@@ -141,7 +169,7 @@ pipelining = True
 ```
 
 ### inventory.ini
-```
+```sh
 # 관리할 서버들의 정보를 정의
 [ci_servers]                      # 그룹명
 mac-studio-ci ansible_host=XXX.XX.XX.XXX ansible_user=jenkins
@@ -158,8 +186,28 @@ ansible_python_interpreter=auto
 
 ```
 
-### ping test
+### 최초 mac command line install
+```sh
+# Xcode Command Line Tools 설치(원격으로 install 수행)
+ansible all_macs -m shell -a "xcode-select --install"
+
+# Xcode 라이선스 동의 (mac-studio-ci)
+ansible mac-studio-ci -m shell -a "sudo xcodebuild -license accept" --become
+
+# Command Line Tools 설치 확인
+ansible all_macs -m shell -a "xcode-select -p"
+
+# brew는 원격접속으로 설치!
+https://brew.sh/
+
+#  passwordless sudo 설정 후 재시도
+ssh -i ~/.ssh/ansible_key mobile@10.88.20.173
+echo "mobile ALL=(ALL) NOPASSWD: ALL" | sudo tee /etc/sudoers.d/mobile
+
 ```
+
+### ping test
+```sh
 # 디렉토리 이동
 cd ~/ansible-mac-servers
 
@@ -174,22 +222,10 @@ ansible docker_servers -m ping
 ansible all_macs -a "whoami"
 ansible all_macs -a "hostname"
 ```
-
-## 플레이북 설정
-
-### 플레이북 구조
-```
-playbooks/
-├── initial-setup.yml       # 기본 환경 + 필수 패키지
-├── update-packages.yml     # 패키지 업데이트
-├── jenkins-cnofig.yml      # jenkins 업데이트시 plist 파일 갱신처리한다.
-└── system-restart.yml      # 패키지 업데이트 이후 시스템 재시작(grafana, jenkins, prometheous)
-```
-
 ## 환경변수 디렉토리(VARS) 설정
 
 ### 플레이북 구조
-```
+```sh
 group_vars/
 ├── all.yml        # 기본 환경 + 필수 패키지
 ├── ci_servers.yml     # 선택적/추가 패키지 설치
@@ -199,7 +235,7 @@ group_vars/
 
 ## 패키지 설치하기
 ### 새 패키지 즉시 설치
-```
+```sh
 ansible all_macs -m shell -a "
 export HOMEBREW_NO_AUTO_UPDATE=1;
 /opt/homebrew/bin/brew install vim tmux
@@ -207,7 +243,7 @@ export HOMEBREW_NO_AUTO_UPDATE=1;
 ```
 
 ### iOS 서버에만
-```
+```sh
 ansible ci_servers -m shell -a "
 export HOMEBREW_NO_AUTO_UPDATE=1;
 /opt/homebrew/bin/brew install swiftlint
@@ -217,7 +253,7 @@ export HOMEBREW_NO_AUTO_UPDATE=1;
 
 
 ### 관리자 권한부여
-```
+```sh
 # Mac Studio CI 서버에서 (jenkins 사용자를 관리자로)
 sudo dseditgroup -o edit -a jenkins -t user admin
 # 각 서버에 직접 접속해서 passwordless sudo 설정
@@ -227,4 +263,25 @@ echo "jenkins ALL=(ALL) NOPASSWD: ALL" | sudo tee /etc/sudoers.d/jenkins
 sudo dseditgroup -o edit -a mobile -t user admin
 # 각 서버에 직접 접속해서 passwordless sudo 설정
 echo "mobile ALL=(ALL) NOPASSWD: ALL" | sudo tee /etc/sudoers.d/mobile
+```
+
+### Gitlab 초기 패스워드 
+```sh
+# Docker Compose 디렉토리에서 실행
+cd /opt/gitlab-docker
+docker exec gitlab cat /etc/gitlab/initial_root_password
+
+# gitlab 복구
+cd /opt/gitlab-docker
+docker compose up -d
+
+# gitlab 로그확인
+docker logs gitlab -f
+```
+
+### Docker gitlab 백업 및 복구
+```sh
+script
+    ├── gitlab-backup.sh
+    └── gitlab-restore.sh
 ```

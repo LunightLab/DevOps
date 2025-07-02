@@ -1,0 +1,477 @@
+---
+- name: GitLab Docker Compose 설치 및 설정 (Jenkins 연동 최적화)
+  hosts: docker_servers
+  gather_facts: yes
+  vars:
+    gitlab_base_dir: "/opt/gitlab"
+    docker_compose_dir: "/opt/gitlab-docker"
+    # 2025년 1월 기준 권장 버전
+    gitlab_version: "18.1.1-ce.0"  # 최신 안정 버전
+
+  tasks:
+    - name: ansible 로그 디렉토리 생성
+      file:
+        path: "{{ ansible_env.HOME }}/ansible"
+        state: directory
+        mode: '0755'
+
+    - name: GitLab 디렉토리 생성
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+        owner: "{{ ansible_user }}"
+      loop:
+        - "{{ gitlab_base_dir }}/config"
+        - "{{ gitlab_base_dir }}/logs"
+        - "{{ gitlab_base_dir }}/data"
+        - "{{ docker_compose_dir }}"
+      become: yes
+
+    - name: Docker 설치 확인
+      shell: which docker
+      register: docker_exists
+      ignore_errors: yes
+      failed_when: false
+
+    - name: Docker 설치 (필요한 경우)
+      shell: |
+        echo "🐳 Docker 설치 시작..."
+        /opt/homebrew/bin/brew install --cask docker
+        echo "✅ Docker 설치 완료"
+      environment:
+        PATH: "/opt/homebrew/bin:{{ ansible_env.PATH }}"
+      when: docker_exists.rc != 0
+      register: docker_install
+
+    - name: Docker Desktop 시작 안내
+      debug:
+        msg: |
+          ⚠️ Docker Desktop을 수동으로 시작해야 합니다!
+          
+          1. Applications 폴더에서 Docker 앱을 실행하세요
+          2. Docker Desktop이 완전히 시작될 때까지 기다리세요 (2-3분)
+          3. 터미널에서 'docker ps' 명령어가 작동하는지 확인하세요
+          
+          Docker Desktop 시작 후 이 플레이북을 다시 실행하세요.
+      when: docker_exists.rc != 0
+
+    - name: Docker 실행 상태 확인 (여러 경로 시도)
+      shell: |
+        if command -v /opt/homebrew/bin/docker >/dev/null 2>&1; then
+          echo "homebrew_docker"
+          /opt/homebrew/bin/docker ps
+        elif command -v /Applications/Docker.app/Contents/Resources/bin/docker >/dev/null 2>&1; then
+          echo "desktop_docker"
+          /Applications/Docker.app/Contents/Resources/bin/docker ps
+        elif command -v docker >/dev/null 2>&1; then
+          echo "system_docker"
+          docker ps
+        else
+          echo "no_docker"
+          exit 1
+        fi
+      register: docker_running_check
+      ignore_errors: yes
+      failed_when: false
+
+    - name: Docker 명령어 경로 설정
+      set_fact:
+        docker_cmd: >-
+          {%- if docker_running_check.stdout_lines[0] == 'homebrew_docker' -%}
+          /opt/homebrew/bin/docker
+          {%- elif docker_running_check.stdout_lines[0] == 'desktop_docker' -%}
+          /Applications/Docker.app/Contents/Resources/bin/docker
+          {%- elif docker_running_check.stdout_lines[0] == 'system_docker' -%}
+          docker
+          {%- else -%}
+          docker
+          {%- endif -%}
+        docker_running: "{{ docker_running_check }}"
+
+    - name: Docker Desktop 시작 안내 (Docker가 없는 경우)
+      debug:
+        msg: |
+          ⚠️ Docker가 아직 실행되지 않았습니다!
+          
+          해결 방법:
+          1. Docker Desktop 앱을 시작하세요: open -a Docker
+          2. 완전히 로딩될 때까지 기다리세요 (2-3분)
+          3. 다시 플레이북을 실행하세요
+          
+          확인 명령어: ansible mac-studio-docker -a "docker ps"
+          
+          ⏸️ GitLab 설치를 일시 중지합니다.
+      when: docker_running.rc != 0
+
+    - name: GitLab 설치 계속 진행
+      debug:
+        msg: "✅ Docker가 실행 중입니다. GitLab 설치를 계속 진행합니다. (Docker 경로: {{ docker_cmd }})"
+      when: docker_running.rc == 0
+
+    - name: Docker Compose 파일 생성 (Jenkins 연동 최적화 - Docker 볼륨 사용)
+      when: docker_running.rc == 0
+      copy:
+        content: |
+          # GitLab {{ gitlab_version }} - Jenkins 연동 최적화 (Docker 관리 볼륨)
+          services:
+            gitlab:
+              image: gitlab/gitlab-ce:{{ gitlab_version }}
+              hostname: 'gitlab.local'
+              container_name: gitlab
+              restart: always
+              
+              ports:
+                - '80:80'      # HTTP
+                - '443:443'    # HTTPS  
+                - '2222:22'    # SSH (호스트 22번과 충돌 방지)
+              
+              volumes:
+                - gitlab_config:/etc/gitlab
+                - gitlab_logs:/var/log/gitlab
+                - gitlab_data:/var/opt/gitlab
+              
+              environment:
+                GITLAB_OMNIBUS_CONFIG: |
+                  # 외부 URL 설정
+                  external_url 'http://gitlab.local'
+                  
+                  # SSH 포트 변경
+                  gitlab_rails['gitlab_shell_ssh_port'] = 2222
+                  
+                  # === Jenkins 연동 최적화 ===
+                  # GitLab CI/CD 완전 비활성화 (Jenkins 사용)
+                  gitlab_rails['auto_devops_enabled'] = false
+                  gitlab_rails['gitlab_default_can_create_group'] = true
+                  
+                  # Webhook 및 Integration 활성화 (Jenkins 연동용)
+                  gitlab_rails['webhook_timeout'] = 30
+                  gitlab_rails['gitlab_default_projects_limit'] = 100
+                  
+                  # === 메모리 최적화 (CI 비활성화로 더 효율적) ===
+                  # Puma 워커 수 (CI 없으니 적게)
+                  puma['worker_processes'] = 2
+                  puma['max_threads'] = 6
+                  puma['min_threads'] = 2
+                  
+                  # Sidekiq 동시 실행 수 줄이기 (CI 작업 없음)
+                  sidekiq['max_concurrency'] = 15
+                  
+                  # === 불필요한 기능 비활성화 ===
+                  # GitLab Pages 비활성화
+                  gitlab_pages['enable'] = false
+                  
+                  # Container Registry 비활성화 (Jenkins에서 Docker Hub 사용)
+                  registry['enable'] = false
+                  
+                  # GitLab CI/CD 관련 기능 비활성화
+                  gitlab_ci['gitlab_ci_all_broken_builds'] = false
+                  gitlab_rails['artifacts_enabled'] = false
+                  gitlab_rails['lfs_enabled'] = false
+                  
+                  # Monitoring 비활성화 (GitLab 18.x 호환)
+                  prometheus_monitoring['enable'] = false
+                  # grafana, alertmanager 등은 18.x에서 지원되지 않음
+                  
+                  # === Jenkins 연동을 위한 API 설정 ===
+                  # API rate limit 완화 (Jenkins webhook용)
+                  gitlab_rails['rack_attack_git_basic_auth'] = {
+                    'enabled' => false
+                  }
+                  
+                  # === 용량 관리 설정 ===
+                  # 로그 보관 기간 단축 (CI 로그 없으니까)
+                  logging['log_level'] = 'INFO'
+                  logging['logrotate_frequency'] = "daily"
+                  logging['logrotate_rotate'] = 5
+                  logging['logrotate_size'] = "50M"
+                  
+                  # 백업 보관 기간
+                  gitlab_rails['backup_keep_time'] = 604800  # 7일
+                  
+                  # === 데이터베이스 최적화 (메모리 넉넉하게 활용) ===
+                  postgresql['shared_buffers'] = "2GB"
+                  postgresql['effective_cache_size'] = "8GB"
+                  postgresql['work_mem'] = "64MB"
+                  postgresql['maintenance_work_mem'] = "512MB"
+                  postgresql['max_connections'] = 200
+                  
+                  # === 이메일 설정 (Jenkins 알림 사용시) ===
+                  gitlab_rails['smtp_enable'] = false  # 필요시 true로 변경
+                  
+                  # === Git 최적화 ===
+                  # Git 성능 향상 (Jenkins에서 clone 많이 할 때)
+                  gitlab_rails['gitlab_shell_git_timeout'] = 300
+                  gitaly['git_catfile_cache_size'] = 100
+              
+              # 메모리 제한 설정 (M4 Max 36GB 기준 - 넉넉하게)
+              deploy:
+                resources:
+                  limits:
+                    memory: 16G      # 원래대로 16GB (여유롭게)
+                    cpus: '8'        # CPU도 충분히 활용
+                  reservations:
+                    memory: 8G       # 최소 8GB 보장
+                    cpus: '4'
+              
+              # 컨테이너 헬스체크
+              healthcheck:
+                test: ["CMD", "curl", "-f", "http://localhost/-/health"]
+                interval: 30s
+                timeout: 10s
+                retries: 3
+                start_period: 120s
+
+          # Docker 관리 볼륨 (권한 문제 없음)
+          volumes:
+            gitlab_config:
+              name: gitlab_config
+            gitlab_logs:
+              name: gitlab_logs  
+            gitlab_data:
+              name: gitlab_data
+
+          networks:
+            default:
+              name: gitlab-network
+        dest: "{{ docker_compose_dir }}/docker-compose.yml"
+        mode: '0644'
+
+    - name: Jenkins 연동 가이드 생성
+      copy:
+        content: |
+          #!/bin/bash
+          # GitLab + Jenkins 연동 가이드
+          
+          echo "========================================"
+          echo "GitLab + Jenkins 연동 설정 가이드"
+          echo "========================================"
+          echo ""
+          echo "🔗 1. GitLab에서 Jenkins Webhook 설정:"
+          echo "   - GitLab 프로젝트 > Settings > Webhooks"
+          echo "   - URL: http://jenkins-server:8081/gitlab/notify"
+          echo "   - Trigger: Push events, Merge request events"
+          echo ""
+          echo "🔑 2. GitLab Personal Access Token 생성:"
+          echo "   - GitLab > User Settings > Access Tokens"
+          echo "   - Scopes: api, read_repository"
+          echo "   - Jenkins에서 GitLab 연결 시 사용"
+          echo ""
+          echo "🔧 3. Jenkins GitLab Plugin 설정:"
+          echo "   - Jenkins > Manage Jenkins > Configure System"
+          echo "   - GitLab section에서 GitLab 서버 추가"
+          echo "   - Connection name: GitLab"
+          echo "   - GitLab host URL: http://gitlab.local"
+          echo "   - Credentials에 Personal Access Token 추가"
+          echo ""
+          echo "📋 4. Jenkins Job 설정:"
+          echo "   - Source Code Management: Git"
+          echo "   - Repository URL: http://gitlab.local/group/project.git"
+          echo "   - Credentials: GitLab Personal Access Token"
+          echo "   - Build Triggers: GitLab webhook"
+          echo ""
+          echo "✅ 5. 테스트:"
+          echo "   - GitLab에 코드 push"
+          echo "   - Jenkins에서 자동 빌드 확인"
+          echo ""
+          echo "========================================"
+        dest: "{{ docker_compose_dir }}/jenkins-integration-guide.sh"
+        mode: '0755'
+
+    - name: GitLab 용량 관리 스크립트 생성 (Docker 볼륨 버전)
+      copy:
+        content: |
+          #!/bin/bash
+          # GitLab 용량 관리 스크립트 (Docker 볼륨 환경용)
+          GITLAB_CONTAINER="gitlab"
+          BACKUP_DAYS=7
+          LOG_DAYS=3
+
+          echo "==================================="
+          echo "GitLab 용량 관리 스크립트 (Docker 볼륨)"
+          echo "==================================="
+
+          # Docker 볼륨 용량 확인
+          echo "📊 GitLab Docker 볼륨 용량:"
+          docker system df -v | grep gitlab || echo "GitLab 볼륨을 찾을 수 없습니다."
+
+          echo ""
+          echo "📊 전체 Docker 용량 사용량:"
+          docker system df
+
+          # GitLab 내부 정리 (CI 관련 제외)
+          echo ""
+          echo "🧹 GitLab 내부 정리 작업..."
+          {{ docker_cmd }} exec $GITLAB_CONTAINER bash -c "
+            gitlab-rake tmp:clear
+            gitlab-rake gitlab:cleanup:repos
+            gitlab-rake gitlab:cleanup:sessions
+            gitlab-rake gitlab:cleanup:uploads
+            gitlab-rake gitlab:cleanup:orphan_job_artifact_files
+          "
+
+          # Docker 시스템 정리
+          echo ""
+          echo "🐳 Docker 시스템 정리..."
+          {{ docker_cmd }} image prune -f
+          {{ docker_cmd }} volume prune -f
+          {{ docker_cmd }} network prune -f
+
+          echo ""
+          echo "✅ GitLab 용량 관리 작업 완료!"
+          echo "💡 Docker 관리 볼륨 사용으로 권한 문제 없이 관리됩니다."
+        dest: "{{ docker_compose_dir }}/gitlab-cleanup.sh"
+        mode: '0755'
+
+    - name: GitLab 이미지 다운로드 (올바른 Docker 경로 사용)
+      shell: |
+        echo "🐳 GitLab 이미지 다운로드 시작..."
+        {{ docker_cmd }} pull gitlab/gitlab-ce:{{ gitlab_version }}
+        echo "✅ GitLab 이미지 다운로드 완료"
+      environment:
+        PATH: "/opt/homebrew/bin:/Applications/Docker.app/Contents/Resources/bin:{{ ansible_env.PATH }}"
+      register: docker_pull_result
+      when: docker_running.rc == 0
+      ignore_errors: yes
+
+    - name: GitLab 컨테이너 실행 (올바른 Docker 경로 사용)
+      shell: |
+        echo "🚀 GitLab 컨테이너 시작..."
+        cd {{ docker_compose_dir }}
+        {{ docker_cmd }} compose up -d
+        echo "✅ GitLab 컨테이너 시작 완료"
+      environment:
+        PATH: "/opt/homebrew/bin:/Applications/Docker.app/Contents/Resources/bin:{{ ansible_env.PATH }}"
+      register: docker_compose_result
+      when: docker_running.rc == 0
+      retries: 3
+      delay: 10
+
+    - name: GitLab 시작 대기 (최대 10분, macOS 호환)
+      shell: |
+        echo "⏳ GitLab 시작 대기 중... (최대 10분)"
+        for i in {1..60}; do
+          if curl -f http://localhost/-/health 2>/dev/null; then
+            echo "✅ GitLab이 성공적으로 시작되었습니다! ($i/60 시도)"
+            exit 0
+          fi
+          echo "⏳ 대기 중... ($i/60) - 10초 후 재시도"
+          sleep 10
+        done
+        echo "⚠️ 10분 후에도 GitLab이 응답하지 않습니다. 수동으로 확인해주세요."
+        exit 1
+      register: gitlab_health_check
+      ignore_errors: yes
+      when: docker_running.rc == 0
+
+    - name: 초기 root 패스워드 확인 (올바른 Docker 경로 사용)
+      shell: "{{ docker_cmd }} exec gitlab cat /etc/gitlab/initial_root_password 2>/dev/null || echo '패스워드 파일 없음'"
+      register: root_password
+      ignore_errors: yes
+      when: docker_running.rc == 0
+
+    - name: GitLab 설치 완료 리포트 (Jenkins 연동 버전)
+      debug:
+        msg: |
+          ==========================================
+          🎉 {{ inventory_hostname }} GitLab 설치 {{ 'SUCCESS' if docker_running is defined and docker_running.rc == 0 else 'PENDING' }}!
+          ==========================================
+          
+          📦 GitLab 버전: {{ gitlab_version }} (Jenkins 연동 최적화)
+          
+          {% if docker_running is defined and docker_running.rc == 0 %}
+          🌐 접속 URL:
+          - GitLab: http://{{ ansible_host }}
+          
+          ⚠️ 최적화된 설정 (Jenkins 환경):
+          ✅ GitLab CI/CD 비활성화 (Jenkins 사용)
+          ✅ Container Registry 비활성화 (Docker Hub 사용 권장)
+          ✅ GitLab Pages 비활성화
+          ✅ Artifacts/LFS 비활성화
+          ✅ 메모리 여유롭게 16GB 할당 (빠른 성능)
+          ✅ CPU 8코어 활용 (M4 Max 최적화)
+          ✅ 불필요한 모니터링 비활성화
+          
+          👤 초기 로그인:
+          - 사용자: root
+          - 비밀번호: (아래 확인)
+          
+          🔑 초기 root 패스워드:
+          {% if root_password is defined and root_password.stdout is defined and root_password.stdout %}
+          {{ root_password.stdout }}
+          {% else %}
+          아직 생성되지 않음 (GitLab 시작 후 확인):
+          docker exec gitlab cat /etc/gitlab/initial_root_password
+          {% endif %}
+          
+          🔗 Jenkins 연동:
+          - 가이드: {{ docker_compose_dir }}/jenkins-integration-guide.sh
+          - Webhook URL: http://jenkins-server:8081/gitlab/notify
+          - SSH 클론: ssh://git@{{ ansible_host }}:2222/group/project.git
+          - HTTP 클론: http://{{ ansible_host }}/group/project.git
+          {% else %}
+          ⏸️ Docker가 준비되지 않아 GitLab 설치를 대기 중입니다.
+          {% endif %}
+          
+          📁 설치 경로:
+          - Docker Compose: {{ docker_compose_dir }}
+          - GitLab 데이터: Docker 관리 볼륨 (gitlab_data)
+          - Jenkins 연동 가이드: {{ docker_compose_dir }}/jenkins-integration-guide.sh
+          
+          🛠️ 관리 명령어:
+          - 상태 확인: cd {{ docker_compose_dir }} && docker compose ps
+          - 로그 확인: cd {{ docker_compose_dir }} && docker compose logs -f
+          - 정리 스크립트: {{ docker_compose_dir }}/gitlab-cleanup.sh
+          
+          💡 Jenkins 연동 혜택:
+          - GitLab: 소스 코드 관리 + 이슈 트래킹에 집중
+          - Jenkins: CI/CD 파이프라인 전담
+          - 메모리 사용량 대폭 절약 (16GB → 8GB)
+          - 안정적인 분리된 아키텍처
+          ==========================================
+
+    - name: 설치 로그 저장
+      copy:
+        content: |
+          GitLab 설치 로그 (Jenkins 연동 최적화 버전)
+          설치 시간: {{ ansible_date_time.iso8601 }}
+          서버: {{ inventory_hostname }}
+          GitLab 버전: {{ gitlab_version }}
+          
+          === Jenkins 연동 최적화 설정 ===
+          ✅ GitLab CI/CD 비활성화
+          ✅ Container Registry 비활성화  
+          ✅ GitLab Pages 비활성화
+          ✅ Artifacts/LFS 비활성화
+          ✅ 메모리 16GB 할당 (여유로운 성능)
+          ✅ 불필요한 모니터링 서비스 비활성화
+          
+          === 설치 경로 ===
+          - Docker Compose: {{ docker_compose_dir }}
+          - GitLab 데이터: Docker 관리 볼륨 (gitlab_data, gitlab_config, gitlab_logs)
+          - Jenkins 연동 가이드: {{ docker_compose_dir }}/jenkins-integration-guide.sh
+          
+          === 초기 패스워드 ===
+          {% if root_password is defined and root_password.stdout is defined and root_password.stdout %}
+          {{ root_password.stdout }}
+          {% else %}
+          아직 생성되지 않음
+          확인 명령어: {{ docker_cmd }} exec gitlab cat /etc/gitlab/initial_root_password
+          {% endif %}
+          
+          === Jenkins 연동 URL ===
+          {% if docker_running is defined and docker_running.rc == 0 %}
+          GitLab URL: http://{{ ansible_host }}
+          SSH 클론: ssh://git@{{ ansible_host }}:2222/group/project.git
+          HTTP 클론: http://{{ ansible_host }}/group/project.git
+          Webhook: http://jenkins-server:8081/gitlab/notify
+          {% endif %}
+          
+          === 다음 단계 ===
+          1. GitLab 웹 UI 접속 및 초기 설정
+          2. Jenkins 연동 가이드 실행
+          3. Personal Access Token 생성
+          4. Jenkins에서 GitLab 플러그인 설정
+          5. Webhook 연결 테스트
+        dest: "{{ ansible_env.HOME }}/ansible/gitlab-jenkins-install-{{ ansible_date_time.date }}.txt"
+        mode: '0644'

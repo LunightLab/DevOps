@@ -1,5 +1,5 @@
 ---
-- name: SSL 우회를 포함한 초기 설치
+- name: Mac 서버 초기 설치
   hosts: all_macs
   gather_facts: yes
   # vars 섹션 제거 - group_vars/all.yml에서 로드됨
@@ -8,7 +8,7 @@
     - name: 현재 시스템 정보 출력
       debug:
         msg: |
-          === SSL 우회 적용된 초기 설치 ===
+          === Mac 서버 초기 설치 ===
           서버: {{ inventory_hostname }}
           사용자: {{ ansible_user }}
           OS: {{ ansible_distribution }} {{ ansible_distribution_version }}
@@ -23,38 +23,37 @@
       debug:
         msg: "Homebrew {{ 'exists' if brew_check.rc == 0 else 'not found' }}"
 
+    - name: Homebrew 수동 설치 안내
+      debug:
+        msg: |
+          ⚠️  Homebrew가 설치되지 않았습니다!
+          
+          각 서버에 SSH로 접속해서 수동 설치하세요:
+          ssh -i ~/.ssh/ansible_key {{ ansible_user }}@{{ ansible_host }}
+          /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+          
+          설치 후 이 플레이북을 다시 실행하세요.
+      when: brew_check.rc != 0
+
     - name: .zshrc 파일 생성 및 PATH 설정
       blockinfile:
         path: "{{ ansible_env.HOME }}/.zshrc"
-        marker: "# {mark} HOMEBREW SETUP WITH SSL BYPASS"
+        marker: "# {mark} HOMEBREW SETUP"
         block: |
-          # Homebrew SSL 우회 설정
-          export HOMEBREW_NO_AUTO_UPDATE={{ ssl_bypass_env.HOMEBREW_NO_AUTO_UPDATE }}
-          export HOMEBREW_CURLRC={{ ssl_bypass_env.HOMEBREW_CURLRC }}
-          export HOMEBREW_NO_ANALYTICS={{ ssl_bypass_env.HOMEBREW_NO_ANALYTICS }}
-          export HOMEBREW_NO_INSECURE_REDIRECT={{ ssl_bypass_env.HOMEBREW_NO_INSECURE_REDIRECT }}
-          export HOMEBREW_CURL_RETRIES={{ ssl_bypass_env.HOMEBREW_CURL_RETRIES }}
-          
           # Homebrew PATH 설정
           eval "$(/opt/homebrew/bin/brew shellenv)"
+          
+          # Docker CLI PATH 설정 (Docker Desktop)
+          export PATH="/Applications/Docker.app/Contents/Resources/bin:$PATH"
         create: yes
 
-    - name: curl 설정 파일 생성 (SSL 검증 비활성화)
-      copy:
-        content: "insecure"
-        dest: "{{ ansible_env.HOME }}/.curlrc"
-        mode: '0644'
-
-    - name: 공통 기본 패키지 설치 (SSL 우회 환경변수 적용)
-      shell: |
-        export HOMEBREW_NO_AUTO_UPDATE=1
-        export HOMEBREW_CURLRC=1
-        export HOMEBREW_NO_ANALYTICS=1
-        /opt/homebrew/bin/brew install {{ item }}
+    - name: 공통 기본 패키지 설치
+      homebrew:
+        name: "{{ item }}"
+        state: present
+      loop: "{{ common_packages }}"  # group_vars/all.yml에서 로드
       environment:
         PATH: "/opt/homebrew/bin:{{ ansible_env.PATH }}"
-      loop: "{{ common_packages }}"  # group_vars/all.yml에서 로드
-      ignore_errors: yes
 
     - name: 공통 디렉토리 생성
       file:
@@ -68,16 +67,13 @@
   # vars 섹션 제거 - group_vars/ci_servers.yml에서 로드됨
       
   tasks:
-    - name: iOS 개발 도구 설치 (SSL 우회)
-      shell: |
-        export HOMEBREW_NO_AUTO_UPDATE=1
-        export HOMEBREW_CURLRC=1
-        export HOMEBREW_NO_ANALYTICS=1
-        /opt/homebrew/bin/brew install {{ item }}
+    - name: iOS 개발 도구 설치
+      homebrew:
+        name: "{{ item }}"
+        state: present
+      loop: "{{ ios_packages }}"  # group_vars/ci_servers.yml에서 로드
       environment:
         PATH: "/opt/homebrew/bin:{{ ansible_env.PATH }}"
-      loop: "{{ ios_packages }}"  # group_vars/ci_servers.yml에서 로드
-      ignore_errors: yes
 
     - name: iOS 프로젝트 디렉토리 생성
       file:
@@ -91,16 +87,27 @@
   # vars 섹션 제거 - group_vars/docker_servers.yml에서 로드됨
       
   tasks:
-    - name: Android 개발 도구 설치 (SSL 우회)
-      shell: |
-        export HOMEBREW_NO_AUTO_UPDATE=1
-        export HOMEBREW_CURLRC=1
-        export HOMEBREW_NO_ANALYTICS=1
-        /opt/homebrew/bin/brew install {{ item }}
+    - name: Android 개발 도구 설치
+      homebrew:
+        name: "{{ item }}"
+        state: present
+      loop: "{{ android_packages }}"  # group_vars/docker_servers.yml에서 로드
       environment:
         PATH: "/opt/homebrew/bin:{{ ansible_env.PATH }}"
-      loop: "{{ android_packages }}"  # group_vars/docker_servers.yml에서 로드
-      ignore_errors: yes
+
+    - name: Docker Desktop 설치 확인
+      stat:
+        path: "/Applications/Docker.app"
+      register: docker_app_exists
+
+    - name: Docker Desktop 설치 (필요한 경우만)
+      homebrew_cask:
+        name: docker
+        state: present
+      when: not docker_app_exists.stat.exists
+      register: docker_install
+      environment:
+        PATH: "/opt/homebrew/bin:{{ ansible_env.PATH }}"
 
     - name: Android 프로젝트 디렉토리 생성
       file:
@@ -108,6 +115,23 @@
         state: directory
         mode: '0755'
       loop: "{{ android_directories }}"  # group_vars/docker_servers.yml에서 로드
+
+    - name: Docker Desktop 시작 안내
+      debug:
+        msg: |
+          {% if docker_app_exists.stat.exists %}
+          ✅ Docker Desktop이 이미 설치되어 있습니다!
+          {% elif docker_install is defined and docker_install.changed %}
+          ✅ Docker Desktop 설치가 완료되었습니다!
+          {% endif %}
+          
+          🐳 다음 단계:
+          1. Applications 폴더에서 Docker 앱을 실행하세요
+          2. Docker Desktop이 완전히 시작될 때까지 대기 (2-3분)
+          3. 새 터미널에서 'docker ps' 명령어 테스트
+          
+          ✅ Docker 준비 확인 명령어:
+          ansible {{ inventory_hostname }} -a "docker ps"
 
 - name: Oh My Zsh 및 agnoster 테마 설정
   hosts: all_macs
@@ -121,7 +145,6 @@
       shell: |
         sh -c "$(curl -fsSL https://raw.github.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
       when: not omz_exists.stat.exists
-      ignore_errors: yes
 
     - name: Oh My Zsh 플러그인 설치
       git:
@@ -132,7 +155,6 @@
       loop:
         - zsh-autosuggestions
         - zsh-syntax-highlighting
-      ignore_errors: yes
 
     - name: agnoster 테마 및 통합 설정
       copy:
@@ -147,15 +169,11 @@
           # Oh My Zsh 로드
           source $ZSH/oh-my-zsh.sh
           
-          # Homebrew SSL 우회 설정
-          export HOMEBREW_NO_AUTO_UPDATE={{ ssl_bypass_env.HOMEBREW_NO_AUTO_UPDATE }}
-          export HOMEBREW_CURLRC={{ ssl_bypass_env.HOMEBREW_CURLRC }}
-          export HOMEBREW_NO_ANALYTICS={{ ssl_bypass_env.HOMEBREW_NO_ANALYTICS }}
-          export HOMEBREW_NO_INSECURE_REDIRECT={{ ssl_bypass_env.HOMEBREW_NO_INSECURE_REDIRECT }}
-          export HOMEBREW_CURL_RETRIES={{ ssl_bypass_env.HOMEBREW_CURL_RETRIES }}
-          
           # Homebrew PATH 설정
           eval "$(/opt/homebrew/bin/brew shellenv)"
+          
+          # Docker CLI PATH 설정 (Docker Desktop)
+          export PATH="/Applications/Docker.app/Contents/Resources/bin:$PATH"
           
           # agnoster 테마 설정
           DEFAULT_USER="{{ ansible_user }}"
@@ -169,6 +187,15 @@
           alias jenkins-start='brew services start jenkins-lts'
           alias jenkins-stop='brew services stop jenkins-lts'
           alias jenkins-status='brew services list | grep jenkins'
+          
+          # Docker 관련 aliases
+          alias dps='docker ps'
+          alias dpa='docker ps -a'
+          alias di='docker images'
+          alias dc='docker compose'
+          alias dcup='docker compose up -d'
+          alias dcdown='docker compose down'
+          alias dclogs='docker compose logs -f'
         dest: "{{ ansible_env.HOME }}/.zshrc"
         mode: '0644'
         
@@ -181,11 +208,26 @@
       environment:
         PATH: "/opt/homebrew/bin:{{ ansible_env.PATH }}"
 
+    - name: 설치된 Cask 애플리케이션 확인 (Docker 서버)
+      shell: /opt/homebrew/bin/brew list --cask
+      register: installed_casks
+      environment:
+        PATH: "/opt/homebrew/bin:{{ ansible_env.PATH }}"
+      when: inventory_hostname in groups['docker_servers']
+
     - name: 설치 완료 메시지
       debug:
         msg: |
           =================================
           {{ inventory_hostname }} 설치 완료!
           설치된 패키지 수: {{ installed_packages.stdout_lines | length }}
+          {% if inventory_hostname in groups['docker_servers'] and installed_casks is defined %}
+          설치된 Cask 앱: {{ installed_casks.stdout_lines | length }}개
+          {% endif %}
           agnoster 테마 적용됨!
+          {% if inventory_hostname in groups['docker_servers'] %}
+          
+          🐳 Docker Desktop 설치됨!
+          다음 단계: Docker Desktop 앱을 실행하세요
+          {% endif %}
           =================================

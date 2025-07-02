@@ -53,6 +53,22 @@
           ignore_errors: yes
           when: action in ['start', 'stop', 'restart']
 
+        - name: Grafana 서비스 관리 (Docker 서버)
+          shell: /opt/homebrew/bin/brew services {{ action }} grafana
+          environment:
+            PATH: "/opt/homebrew/bin:{{ ansible_env.PATH }}"
+          register: grafana_docker_result
+          ignore_errors: yes
+          when: action in ['start', 'stop', 'restart']
+
+        - name: Prometheus 서비스 관리 (Docker 서버)
+          shell: /opt/homebrew/bin/brew services {{ action }} prometheus
+          environment:
+            PATH: "/opt/homebrew/bin:{{ ansible_env.PATH }}"
+          register: prometheus_docker_result
+          ignore_errors: yes
+          when: action in ['start', 'stop', 'restart']
+
         - name: Docker 상태 확인 (재시작하지 않음)
           shell: |
             if command -v docker >/dev/null 2>&1; then
@@ -81,7 +97,7 @@
       shell: |
         echo "=== 주요 포트 사용 현황 ==="
         lsof -i :3000 2>/dev/null | head -2 || echo "포트 3000: 사용 안함"
-        lsof -i :8080 2>/dev/null | head -2 || echo "포트 8080: 사용 안함"
+        lsof -i :8081 2>/dev/null | head -2 || echo "포트 8081: 사용 안함"
         lsof -i :9090 2>/dev/null | head -2 || echo "포트 9090: 사용 안함"
       register: port_status
 
@@ -103,7 +119,7 @@
           
           🌐 접속 URL:
           {% if 'jenkins-lts' in running_services %}
-          📊 Jenkins: http://{{ inventory_hostname }}:8080
+          📊 Jenkins: http://{{ inventory_hostname }}:8081
           {% endif %}
           {% if 'grafana' in running_services %}
           📈 Grafana: http://{{ inventory_hostname }}:3000
@@ -156,8 +172,16 @@
           - Prometheus: {{ 'SUCCESS' if prometheus_result.rc == 0 else 'FAILED' }}
           {% endif %}
           {% endif %}
-          {% if inventory_hostname in groups['docker_servers'] and jenkins_docker_result is defined %}
+          {% if inventory_hostname in groups['docker_servers'] %}
+          {% if jenkins_docker_result is defined %}
           - Jenkins (Docker): {{ 'SUCCESS' if jenkins_docker_result.rc == 0 else 'FAILED' }}
+          {% endif %}
+          {% if grafana_docker_result is defined %}
+          - Grafana (Docker): {{ 'SUCCESS' if grafana_docker_result.rc == 0 else 'FAILED' }}
+          {% endif %}
+          {% if prometheus_docker_result is defined %}
+          - Prometheus (Docker): {{ 'SUCCESS' if prometheus_docker_result.rc == 0 else 'FAILED' }}
+          {% endif %}
           {% endif %}
           {% endif %}
           
@@ -182,7 +206,8 @@
           ansible {{ inventory_hostname }} -a "brew services restart jenkins-lts"
           ansible {{ inventory_hostname }} -a "brew services restart grafana"
           ansible {{ inventory_hostname }} -a "brew services restart prometheus"
-          
+          ansible {{ inventory_hostname }} -a "brew services restart node_exporter"
+          ansible {{ inventory_hostname }} -a "brew services restart influxdb"
           ⚠️  Docker는 안전을 위해 수동으로 관리하세요:
           - Docker Desktop 재시작 (GUI에서)
           - 개별 컨테이너 재시작: docker restart <container_name>
