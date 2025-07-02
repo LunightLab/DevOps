@@ -1,6 +1,6 @@
 
 ## devOps  
-<img src="images/img-devops.png" alt="devops" width="600" height="400">
+<img src="images/img-devops.png" alt="devops" width="1588" height="861">
 
 [imgGuru - devOps2024 board](https://www.igmguru.com/blog/best-devops-tools)
 
